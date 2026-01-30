@@ -6,23 +6,73 @@
       <h1 class="contract-title">{{ contractsStore.selectedContract!.title }}</h1>
 
       <div class="contract-info">
-        <div class="info-item oil">
-          <span class="label">Pétrole:</span>
-          <span class="value">{{ contractsStore.selectedContract!.oil }} barils</span>
-        </div>
+        <div class="info-row">
+          <div class="info-item oil">
+            <span class="label">Pétrole:</span>
+            <span class="value">{{ contractsStore.selectedContract!.oil }} barils</span>
+          </div>
 
-        <div class="info-item steps">
-          <span class="label">Étapes minimum:</span>
-          <span class="value">{{ contractsStore.selectedContract!.minSteps }}</span>
+          <div class="info-item steps">
+            <span class="label">Étapes minimum:</span>
+            <span class="value">{{ contractsStore.selectedContract!.minSteps }}</span>
+          </div>
         </div>
 
         <div class="dangers-section">
           <h3>Dangers connus:</h3>
-          <ul>
-            <li v-for="(danger, index) in contractsStore.selectedContract!.knownDangers" :key="index">
-              {{ danger }}
-            </li>
-          </ul>
+          <div class="dangers-list">
+            <div
+              v-for="(dangerId, index) in contractsStore.selectedContract!.knownDangers"
+              :key="index"
+              class="danger-item"
+            >
+              <img
+                v-if="getDanger(dangerId)"
+                :src="getDanger(dangerId)!.icon"
+                :alt="getDanger(dangerId)!.label"
+                class="danger-icon"
+              />
+              <span class="danger-label">{{ getDanger(dangerId)?.label || dangerId }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="layers-section">
+          <div class="layers-header">
+            <h3>Couches ({{ contractsStore.selectedContract!.layers.length }} au total)</h3>
+            <p class="radar-info">
+              <span v-if="inventoryStore.radarLevel">
+                📡 Radar niveau {{ inventoryStore.radarLevel }} - {{ inventoryStore.visibleLayersCount }} couches visibles
+              </span>
+              <span v-else class="no-radar">
+                ⚠️ Pas de radar - Achetez-en un pour voir les couches
+              </span>
+            </p>
+          </div>
+          <div class="layers-grid">
+            <div
+              v-for="(layer, index) in contractsStore.selectedContract!.layers"
+              :key="layer.id"
+              :class="[
+                'layer-box',
+                {
+                  'layer-normal': layer.type === 'normal' && index < inventoryStore.visibleLayersCount,
+                  'layer-danger': layer.type === 'danger' && index < inventoryStore.visibleLayersCount,
+                  'layer-hidden': index >= inventoryStore.visibleLayersCount,
+                },
+              ]"
+              :title="getLayerTooltip(layer, index)"
+            >
+              <span class="layer-number">{{ index + 1 }}</span>
+              <img
+                v-if="layer.type === 'danger' && layer.dangerId && index < inventoryStore.visibleLayersCount"
+                :src="getDanger(layer.dangerId)!.icon"
+                :alt="getDanger(layer.dangerId)!.label"
+                class="layer-danger-icon"
+              />
+              <span v-else-if="index >= inventoryStore.visibleLayersCount" class="layer-unknown">?</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -37,9 +87,32 @@
 <script setup lang="ts">
 import { useContractsStore } from '../store/contracts';
 import { useEngineStore } from '../store/engine';
+import { useInventoryStore } from '../store/inventory.store';
+import { getDangerById } from '../data/dangers';
+import type { DangerKey } from '../data/dangers';
+import type { Layer } from '../data/layers';
 
 const contractsStore = useContractsStore();
 const engineStore = useEngineStore();
+const inventoryStore = useInventoryStore();
+
+const getDanger = (id: DangerKey) => {
+  return getDangerById(id);
+};
+
+const getLayerTooltip = (layer: Layer, index: number): string => {
+  if (index >= inventoryStore.visibleLayersCount) {
+    return 'Couche inconnue - Améliorez votre radar';
+  }
+  if (layer.type === 'normal') {
+    return `Couche ${index + 1}: Normale`;
+  }
+  if (layer.type === 'danger' && layer.dangerId) {
+    const danger = getDanger(layer.dangerId);
+    return `Couche ${index + 1}: ${danger?.label || 'Danger'}`;
+  }
+  return `Couche ${index + 1}`;
+};
 
 const closePanel = () => {
   contractsStore.clearSelection();
@@ -82,8 +155,11 @@ const acceptContract = () => {
   border: 3px solid #00ffff;
   border-radius: 15px;
   padding: 30px;
-  max-width: 500px;
+  max-width: 700px;
   width: 90%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 10px 50px rgba(0, 255, 255, 0.3);
   position: relative;
   animation: slideIn 0.3s ease;
@@ -135,16 +211,24 @@ const acceptContract = () => {
 
 .contract-info {
   margin-bottom: 25px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.info-row {
+  display: flex;
+  gap: 12px;
 }
 
 .info-item {
   display: flex;
   justify-content: space-between;
   padding: 15px;
-  margin-bottom: 12px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
   border-left: 4px solid;
+  flex: 1;
 }
 
 .info-item.oil {
@@ -190,26 +274,38 @@ const acceptContract = () => {
   font-weight: bold;
 }
 
-.dangers-section ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+.dangers-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
-.dangers-section li {
+.danger-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  transition: all 0.2s;
+  flex: 0 1 auto;
+}
+
+.danger-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.05);
+}
+
+.danger-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.danger-label {
   color: #ff9999;
-  padding: 8px 0;
-  padding-left: 25px;
-  position: relative;
   font-size: 16px;
-}
-
-.dangers-section li::before {
-  content: '⚠';
-  position: absolute;
-  left: 0;
-  color: #ff6666;
-  font-size: 18px;
+  font-weight: 500;
 }
 
 .button-group {
@@ -254,5 +350,123 @@ const acceptContract = () => {
 .btn-accept:active,
 .btn-cancel:active {
   transform: translateY(0);
+}
+
+.layers-section {
+  background: rgba(0, 100, 255, 0.1);
+  border: 2px solid #6699ff;
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 15px;
+}
+
+.layers-header {
+  margin-bottom: 15px;
+}
+
+.layers-header h3 {
+  color: #6699ff;
+  font-size: 18px;
+  margin: 0 0 8px 0;
+  font-weight: bold;
+}
+
+.radar-info {
+  color: #99ccff;
+  font-size: 14px;
+  margin: 0;
+  font-style: italic;
+}
+
+.no-radar {
+  color: #ffaa00;
+}
+
+.layers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 5px;
+  /* Style de la scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: #6699ff rgba(255, 255, 255, 0.1);
+}
+
+.layers-grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.layers-grid::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.layers-grid::-webkit-scrollbar-thumb {
+  background: #6699ff;
+  border-radius: 4px;
+}
+
+.layers-grid::-webkit-scrollbar-thumb:hover {
+  background: #88bbff;
+}
+
+.layer-box {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: all 0.2s;
+  cursor: help;
+  border: 2px solid;
+}
+
+.layer-normal {
+  background: rgba(0, 255, 0, 0.2);
+  border-color: #00ff00;
+}
+
+.layer-danger {
+  background: rgba(255, 0, 0, 0.2);
+  border-color: #ff6666;
+}
+
+.layer-hidden {
+  background: rgba(100, 100, 100, 0.2);
+  border-color: #666666;
+}
+
+.layer-box:hover {
+  transform: scale(1.1);
+  z-index: 10;
+}
+
+.layer-number {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  font-size: 10px;
+  color: white;
+  font-weight: bold;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.layer-danger-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.layer-unknown {
+  font-size: 24px;
+  color: #999999;
+  font-weight: bold;
 }
 </style>
