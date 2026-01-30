@@ -4,12 +4,12 @@ import { ref } from 'vue';
 export type InventoryItem = {};
 
 export const useInventoryStore = defineStore('inventory', () => {
-  const inventory = ref(new Map());
+    const inventory = ref(new Map());
 
-  const addItem = () => {};
-  const buy = () => {};
+    const addItem = () => {};
+    const buy = () => {};
 
-  return {
-    inventory,
-  };
+    return {
+        inventory,
+    };
 });
