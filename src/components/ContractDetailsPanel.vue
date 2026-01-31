@@ -4,6 +4,10 @@
       <button class="close-button" @click="closePanel">×</button>
 
       <h1 class="contract-title">{{ contractsStore.selectedContract!.title }}</h1>
+      <div class="contract-level">
+        <span v-if="contractsStore.selectedContract!.recognitionLevel === 0" class="level-tuto">TUTORIEL</span>
+        <span v-else class="level-stars">{{ '★'.repeat(contractsStore.selectedContract!.recognitionLevel) }}</span>
+      </div>
 
       <div class="contract-info">
         <div class="info-row">
@@ -58,10 +62,14 @@
                 {
                   'layer-normal': layer.type === 'normal' && index < inventoryStore.visibleLayersCount,
                   'layer-danger': layer.type === 'danger' && index < inventoryStore.visibleLayersCount,
-                  'layer-hidden': index >= inventoryStore.visibleLayersCount,
+                  'layer-hidden': index >= inventoryStore.visibleLayersCount && !inventoryStore.isLayerRevealed(contractsStore.selectedContract!.id, index),
+                  'layer-revealed': index >= inventoryStore.visibleLayersCount && inventoryStore.isLayerRevealed(contractsStore.selectedContract!.id, index),
                 },
               ]"
               :title="getLayerTooltip(layer, index)"
+              @click="revealLayer(index)"
+              @mouseenter="showRevealTooltip(index)"
+              @mouseleave="hideRevealTooltip"
             >
               <span class="layer-number">{{ index + 1 }}</span>
               <img
@@ -70,7 +78,7 @@
                 :alt="getDanger(layer.dangerId)!.label"
                 class="layer-danger-icon"
               />
-              <span v-else-if="index >= inventoryStore.visibleLayersCount" class="layer-unknown">?</span>
+              <span v-else-if="index >= inventoryStore.visibleLayersCount && !inventoryStore.isLayerRevealed(contractsStore.selectedContract!.id, index)" class="layer-unknown">?</span>
             </div>
           </div>
         </div>
@@ -87,6 +95,7 @@
 <script setup lang="ts">
 import { useContractsStore } from '../store/contracts';
 import { useEngineStore } from '../store/engine';
+import { useGameStore } from '../store/game.store';
 import { useInventoryStore } from '../store/inventory.store';
 import { getDangerById } from '../data/dangers';
 import type { DangerKey } from '../data/dangers';
@@ -94,6 +103,7 @@ import type { Layer } from '../data/layers';
 
 const contractsStore = useContractsStore();
 const engineStore = useEngineStore();
+const gameStore = useGameStore();
 const inventoryStore = useInventoryStore();
 
 const getDanger = (id: DangerKey) => {
@@ -101,7 +111,23 @@ const getDanger = (id: DangerKey) => {
 };
 
 const getLayerTooltip = (layer: Layer, index: number): string => {
+  if (inventoryStore.isLayerRevealed(contractsStore.selectedContract!.id, index)) {
+    // Couche révélée
+    if (layer.type === 'normal') {
+      return `Couche ${index + 1}: Normale`;
+    }
+    if (layer.type === 'danger' && layer.dangerId) {
+      const danger = getDanger(layer.dangerId);
+      return `Couche ${index + 1}: ${danger?.label || 'Danger'}`;
+    }
+    return `Couche ${index + 1}`;
+  }
+
   if (index >= inventoryStore.visibleLayersCount) {
+    if (inventoryStore.radarLevel >= 5) {
+      const cost = inventoryStore.calculateRevealCost(index);
+      return `Couche ${index + 1}: Inconnue - ${cost} 🛢️ pour révéler`;
+    }
     return 'Couche inconnue - Améliorez votre radar';
   }
   if (layer.type === 'normal') {
@@ -114,13 +140,38 @@ const getLayerTooltip = (layer: Layer, index: number): string => {
   return `Couche ${index + 1}`;
 };
 
+const revealLayer = (index: number) => {
+  if (inventoryStore.radarLevel < 5) return;
+  if (index < inventoryStore.visibleLayersCount) return;
+
+  const contract = contractsStore.selectedContract;
+  if (!contract) return;
+
+  const success = inventoryStore.revealLayer(contract.id, index);
+  if (success) {
+    console.log(`Couche ${index + 1} révélée!`);
+  }
+};
+
+const showRevealTooltip = (_index: number) => {
+  // Le tooltip est géré par :title
+};
+
+const hideRevealTooltip = () => {
+  // Rien à faire
+};
+
 const closePanel = () => {
   contractsStore.clearSelection();
 };
 
 const acceptContract = () => {
   if (contractsStore.selectedContract) {
+    // Envoyer le contrat au game store pour le jeu des couches
+    gameStore.setContract(contractsStore.selectedContract);
     contractsStore.acceptContract(contractsStore.selectedContract);
+    // Fermer la fenêtre du contrat
+    contractsStore.clearSelection();
     engineStore.changeState('game');
   }
 };
@@ -203,10 +254,32 @@ const acceptContract = () => {
 .contract-title {
   color: #00ffff;
   font-size: 28px;
-  margin: 0 0 25px 0;
+  margin: 0 0 10px 0;
   text-align: center;
   font-weight: bold;
   text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.contract-level {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.level-tuto {
+  background: linear-gradient(135deg, #00aa00, #00ff00);
+  color: #000;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.level-stars {
+  color: #ffff00;
+  font-size: 24px;
+  text-shadow: 0 0 10px rgba(255, 255, 0, 0.5);
 }
 
 .contract-info {
@@ -439,6 +512,18 @@ const acceptContract = () => {
 .layer-hidden {
   background: rgba(100, 100, 100, 0.2);
   border-color: #666666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.layer-hidden:hover {
+  border-color: #ffaa00;
+  background: rgba(100, 100, 100, 0.4);
+}
+
+.layer-revealed {
+  background: rgba(150, 150, 255, 0.3);
+  border-color: #6699ff;
 }
 
 .layer-box:hover {

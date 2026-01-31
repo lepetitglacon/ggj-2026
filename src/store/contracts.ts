@@ -12,6 +12,7 @@ export interface Contract {
   layers: Layer[] // Couches générées pour ce contrat
   x: number
   y: number
+  recognitionLevel: number // Niveau de difficulté (0 = tutoriel, 1-3 = normal)
 }
 
 export const useContractsStore = defineStore('contracts', () => {

@@ -5,6 +5,7 @@ export interface Danger {
   icon: string
   malus: string
   ratio: number
+  color: number // Couleur hexadécimale pour Phaser (ex: 0xff0000 pour rouge)
 }
 
 export const dangers = [
@@ -15,6 +16,7 @@ export const dangers = [
     // Plomb, mercure, cadmium, arsenic
     malus: 'Fait un effet renversement de couleur sur la prochaines couches',
     ratio: 0.1,
+    color: 0x9933ff, // Violet pour toxique
   },
   {
     id: '2',
@@ -23,6 +25,7 @@ export const dangers = [
     // gaz proche régions volcanique / dynamite laissé par des humains
     malus: "Fait pété l'UI, tous les masques sont éclatés sur tout l'écran de manière aléatoire",
     ratio: 0.1,
+    color: 0xff6600, // Orange pour explosion
   },
   {
     id: '3',
@@ -31,6 +34,7 @@ export const dangers = [
     // Causé par des déchets toxiques laissé par les humains, ou gaz causé par des éléments naturels uranium
     malus: 'Irradie les autres masques et leurs retire leurs couleurs et les rends blancs',
     ratio: 0.1,
+    color: 0x00ff00, // Vert pour radiation
   },
   {
     id: '4',
@@ -40,6 +44,7 @@ export const dangers = [
     malus:
       'La drill devient acide et peut casser instantanément une couche sur les 2 couches suivantes',
     ratio: 0.1,
+    color: 0xccff00, // Jaune-vert pour acide
   },
   {
     id: '5',
@@ -48,6 +53,7 @@ export const dangers = [
     // gaz ou lave
     malus: 'Brule tous les masques et les rends calcinés (tout noir)',
     ratio: 0.1,
+    color: 0xff0000, // Rouge pour flamme
   },
   {
     id: '6',
@@ -57,6 +63,7 @@ export const dangers = [
     malus:
       'Masques contaminés deviennent inutilisables pendant un certain temps, ajoutant du chaos dans le drag & drop',
     ratio: 0.1,
+    color: 0x00ffff, // Cyan pour bio-hazard
   },
 ] as Danger[]
 
@@ -67,3 +74,13 @@ export type DangerKey = (typeof dangers)[number]['id']
 export const getDangerById = (id: DangerKey): Danger | undefined => {
   return dangers.find((danger) => danger.id === id)
 }
+
+// Dangers disponibles par niveau de reconnaissance
+export const dangersByRecognitionLevel = {
+  0: ['1', '6'], // Toxique, Bio-hazard
+  1: ['1', '6'], // Toxique, Bio-hazard
+  2: ['1', '6', '2', '5'], // Toxique, Bio-hazard, Explosion, Flammable
+  3: ['1', '6', '2', '5', '3', '4'], // Tous: Toxique, Bio-hazard, Explosion, Flammable, Radiation, Acide
+} as const
+
+export type RecognitionLevelKey = keyof typeof dangersByRecognitionLevel
