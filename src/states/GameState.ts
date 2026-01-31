@@ -223,14 +223,21 @@ class GameState extends Phaser.Scene {
         const width = traitWidth * depthFactor
         const parallaxScale = 1 - segProgress * 0.3 // Réduit de 30% au maximum
 
+        // Effet de perspective 3D: réduire la taille vers le haut (y diminue = remonte à l'écran)
+        const perspectiveY = (y - centerY) / 300 // Normaliser par rapport au centre (-1 to 1)
+        const perspectiveFactor = Math.max(0.5, 1 + perspectiveY * 0.5) // 50% en haut, 150% en bas
+
+        const finalWidth = width * perspectiveFactor
+        const finalScale = parallaxScale * perspectiveFactor
+
         // Tracer un cercle pour former le trait (plus efficace que strokeRect)
-        this.noiseGraphics.fillStyle(0xffffff, parallaxScale)
-        this.noiseGraphics.fillCircle(x, y, (width / 2) * parallaxScale)
+        this.noiseGraphics.fillStyle(0xffffff, finalScale)
+        this.noiseGraphics.fillCircle(x, y, (finalWidth / 2) * finalScale)
 
         // Halo semi-transparent avec effet de profondeur
-        const haloWidth = width * 1.3
-        this.noiseGraphics.fillStyle(0xffffff, 0.4 * parallaxScale)
-        this.noiseGraphics.fillCircle(x, y, (haloWidth / 2) * parallaxScale)
+        const haloWidth = finalWidth * 1.3
+        this.noiseGraphics.fillStyle(0xffffff, 0.4 * finalScale)
+        this.noiseGraphics.fillCircle(x, y, (haloWidth / 2) * finalScale)
       }
     }
 
