@@ -4,7 +4,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import { MenuState } from './states/MenuState.ts'
 import { ContractState } from './states/ContractState.ts'
-import { GameState } from './states/GameState'
+import GameState from './states/GameState'
 import { useEngineStore } from './store/engine'
 
 class Game extends Phaser.Game {

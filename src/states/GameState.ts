@@ -6,14 +6,20 @@ import { getDangerById } from '../data/dangers'
 import type { Layer } from '../data/layers'
 import type { Mask } from '../data/masks'
 import { createMask } from '../data/masks'
+import type { LayerBreakAnimation } from './LayerBreakAnimation'
+import { CrackAnimation } from './LayerBreakAnimation'
+import ParticleEmitter = Phaser.GameObjects.Particles.ParticleEmitter // Animation par défaut
 
-export class GameState extends Phaser.Scene {
+class GameState extends Phaser.Scene {
   private gameStore = useGameStore()
   private engineStore = useEngineStore()
   private inventoryStore = useInventoryStore()
 
+  // Animation strategy pour le cassage de couche
+  private layerBreakAnimation: LayerBreakAnimation = new CrackAnimation(600)
+
   // Éléments du jeu
-  private driller!: Phaser.GameObjects.Rectangle
+  private driller!: Phaser.GameObjects.Image
   private drillerText!: Phaser.GameObjects.Text
   private currentLayerRect!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
   private layerText!: Phaser.GameObjects.Text
@@ -36,30 +42,29 @@ export class GameState extends Phaser.Scene {
   private noiseGraphics!: Phaser.GameObjects.Graphics
   private lastNoiseStep: number = 0
 
+  // Particules et effets
+  private oilParticles!: any
+
   // État du forage
   private currentLayerIndex: number = -1
   private drillingProgress: number = 0
   private currentLayer: Layer | null = null
   private lives: number = 3
+  private emitter?: ParticleEmitter
 
   constructor() {
     super({ key: 'game' })
   }
 
   preload() {
-    // Précharger toutes les images de couches
-    const normalImages = ['1', '2', '3', '4']
-
-    this.load.image('layer-top-top', 'img/layers-pixelated/top/top.png')
-
-    normalImages.forEach((img) => {
-      this.load.image(`layer-normal-${img}`, `img/layers-pixelated/normal/${img}.png`)
-    })
+    // Précharger l'image du drill
+    this.load.image('drill-pixelated', 'img/drill/drill_pixelated.png')
+    this.load.image('oil-particle', 'img/particles/oil.png')
   }
 
   init() {
     this.engineStore.changeState('game')
-    this.currentLayerIndex = -1
+    this.currentLayerIndex = 0
     this.drillingProgress = 0
     this.lives = 3
   }
@@ -67,14 +72,41 @@ export class GameState extends Phaser.Scene {
   create() {
     this.cameras.main.setBackgroundColor('#87CEEB')
 
+    // === COUCHES (fond) ===
+    this.displayLayers()
+
+    // === DRILL ET PARTICULES (bas) ===
+    // Créer le driller en bas
+    this.driller = this.add.image(400, 520, 'drill-pixelated')
+    this.driller.setOrigin(0.5, 0.5)
+    this.driller.setDepth(5)
+
+    this.drillerText = this.add.text(400, 520, '', {
+      fontSize: '20px',
+      color: '#ffffff',
+      align: 'center',
+    })
+    this.drillerText.setOrigin(0.5, 0.5)
+    this.drillerText.setDepth(5)
+    this.drillerText.setVisible(false)
+
+    // Créer les particules de terre
+    this.createOilParticles()
+
+    // Créer les slots et masques (en bas)
+    this.createSlotsAndMasks()
+
+    // === UI EN HAUT (inventaire et infos) ===
     // Bouton retour
     const backButton = this.add.rectangle(50, 30, 80, 35, 0xcc0000)
     backButton.setInteractive({ useHandCursor: true })
+    backButton.setDepth(30)
     const backText = this.add.text(50, 30, '← Retour', {
       fontSize: '14px',
       color: '#ffffff',
     })
     backText.setOrigin(0.5, 0.5)
+    backText.setDepth(31)
     backButton.on('pointerdown', () => {
       this.scene.start('contract')
     })
@@ -87,43 +119,18 @@ export class GameState extends Phaser.Scene {
       padding: { x: 8, y: 4 },
     })
     this.livesText.setOrigin(1, 0.5)
+    this.livesText.setDepth(31)
 
-    // Afficher les couches (actuelle et suivante)
-    this.displayLayers()
+    // Zone d'inventaire (fond noir - tout en haut)
+    const inventoryBg = this.add.rectangle(400, 40, 800, 80, 0x000000, 0.9)
+    inventoryBg.setDepth(28)
 
-    // Créer le driller au centre
-    this.driller = this.add.rectangle(400, 300, 60, 100, 0x333333)
-    this.driller.setDepth(5)
-    this.drillerText = this.add.text(400, 300, '⚙️\nDRILL', {
-      fontSize: '20px',
-      color: '#ffffff',
-      align: 'center',
-    })
-    this.drillerText.setOrigin(0.5, 0.5)
-    this.drillerText.setDepth(5)
-
-    this.layerText = this.add.text(400, 420, this.getLayerDescription(), {
-      fontSize: '16px',
-      color: '#ffffff',
-      backgroundColor: '#000000',
-      padding: { x: 10, y: 5 },
-    })
-    this.layerText.setOrigin(0.5, 0.5)
-    this.layerText.setDepth(15)
-
-    // Créer les slots et masques
-    this.createSlotsAndMasks()
-
-    // Zone d'inventaire (fond noir)
-    const inventoryBg = this.add.rectangle(400, 520, 800, 80, 0x000000, 0.8)
-    inventoryBg.setDepth(9)
-
-    const inventoryLabel = this.add.text(20, 520, 'INVENTAIRE', {
+    const inventoryLabel = this.add.text(20, 10, 'INVENTAIRE', {
       fontSize: '12px',
       color: '#888888',
       fontStyle: 'bold',
     })
-    inventoryLabel.setDepth(11)
+    inventoryLabel.setDepth(29)
   }
 
   update(_time: number, delta: number) {
@@ -144,9 +151,22 @@ export class GameState extends Phaser.Scene {
         this.lastNoiseStep = currentStep
       }
 
+      this?.oilParticles?.emitParticleAt?.(
+        // this.driller.x + this.driller.width / 2,
+        // this.driller.y + this.driller.height,
+        this.driller.x,
+        this.driller.y + this.driller.height / 2,
+        8
+      )
+
       // Si la couche est cassée, passer à la suivante
       if (this.drillingProgress >= 1) {
         this.breakLayer()
+        this?.oilParticles?.emitParticleAt?.(
+          this.driller.x + this.driller.width / 2,
+          this.driller.y + this.driller.height,
+          16
+        )
       }
     }
   }
@@ -167,44 +187,51 @@ export class GameState extends Phaser.Scene {
     const centerX = 400
     const centerY = 300
 
-    // Plus le step est élevé, plus on ajoute de trous
-    const numHoles = step * 50
-    const maxRadius = 5 + step * 3
+    // Créer des couloirs de minage avec des traits
+    const numTunnels = 2 + step
+    const traitWidth = 8 + step * 1.5
 
-    for (let i = 0; i < numHoles; i++) {
-      const seed = step * 10000 + i
+    for (let t = 0; t < numTunnels; t++) {
+      const seed = step * 10000 + t * 1000
 
-      const angle = this.seededRandom(seed) * Math.PI * 2
-      const distanceFactor = this.seededRandom(seed + 1)
+      // Direction de chaque couloir (plus aléatoire que radial)
+      const baseAngle = (t / numTunnels) * Math.PI * 2
+      const angleVariation = (this.seededRandom(seed) - 0.5) * Math.PI * 0.4
+      const angle = baseAngle + angleVariation
 
-      const maxDistance = 50 + step * 35
+      // Nombre de segments dans ce couloir
+      const numSegments = 8 + step * 2
+      const maxDepth = 60 + step * 40
 
-      // Distribution concentrée au centre
-      const distance = Math.pow(distanceFactor, 2) * maxDistance
+      for (let seg = 0; seg < numSegments; seg++) {
+        const segSeed = seed + seg * 100
 
-      const x = centerX + Math.cos(angle) * distance
-      const y = centerY + Math.sin(angle) * distance
+        // Position le long du couloir
+        const segProgress = seg / numSegments
+        const depth = segProgress * maxDepth
 
-      const radius = 2 + this.seededRandom(seed + 2) * maxRadius
+        // Ajouter du waviness au couloir
+        const waveAmount = 15 + step * 3
+        const waveVariation =
+          Math.sin(seg * 0.5) * waveAmount + (this.seededRandom(segSeed) - 0.5) * waveAmount
 
-      // Trou principal (opaque)
-      this.noiseGraphics.fillStyle(0xffffff, 1)
-      this.noiseGraphics.fillCircle(x, y, radius)
+        const x = centerX + Math.cos(angle) * depth + Math.cos(angle + Math.PI / 2) * waveVariation
+        const y = centerY + Math.sin(angle) * depth + Math.sin(angle + Math.PI / 2) * waveVariation
 
-      // Halo de blur autour du trou (semi-transparent)
-      const haloRadius = radius * 1.5
-      this.noiseGraphics.fillStyle(0xffffff, 0.5)
-      this.noiseGraphics.fillCircle(x, y, haloRadius)
+        // Effet de parallaxe 3D: les traits plus loin sont plus petits et plus transparents
+        const depthFactor = 1 - segProgress * 0.5
+        const width = traitWidth * depthFactor
+        const parallaxScale = 1 - segProgress * 0.3 // Réduit de 30% au maximum
 
-      // Halo moyen (assombri)
-      const midBlurRadius = radius * 2
-      this.noiseGraphics.fillStyle(0xffffff, 0.25)
-      this.noiseGraphics.fillCircle(x, y, midBlurRadius)
+        // Tracer un cercle pour former le trait (plus efficace que strokeRect)
+        this.noiseGraphics.fillStyle(0xffffff, parallaxScale)
+        this.noiseGraphics.fillCircle(x, y, (width / 2) * parallaxScale)
 
-      // Halo plus éloigné (très transparent)
-      const blurRadius = radius * 2.5
-      this.noiseGraphics.fillStyle(0xffffff, 0.2)
-      this.noiseGraphics.fillCircle(x, y, blurRadius)
+        // Halo semi-transparent avec effet de profondeur
+        const haloWidth = width * 1.3
+        this.noiseGraphics.fillStyle(0xffffff, 0.4 * parallaxScale)
+        this.noiseGraphics.fillCircle(x, y, (haloWidth / 2) * parallaxScale)
+      }
     }
 
     // Effacer ces trous du masque
@@ -219,14 +246,14 @@ export class GameState extends Phaser.Scene {
     const slotSize = 60
     const slotSpacing = 80
     const startX = 400 - ((slotCount - 1) * slotSpacing) / 2
-    const slotY = 480 // En bas de l'écran
+    const slotY = 150 // Au-dessus du drill
 
     // Créer les slots en bas
     for (let i = 0; i < slotCount; i++) {
       const x = startX + i * slotSpacing
       const slot = this.add.rectangle(x, slotY, slotSize, slotSize, 0x666666, 0.8)
       slot.setStrokeStyle(3, 0xffffff)
-      slot.setDepth(10)
+      slot.setDepth(20)
       this.slots.push(slot)
 
       const slotText = this.add.text(x, slotY, `${i + 1}`, {
@@ -235,13 +262,13 @@ export class GameState extends Phaser.Scene {
         fontStyle: 'bold',
       })
       slotText.setOrigin(0.5, 0.5)
-      slotText.setDepth(11)
+      slotText.setDepth(21)
       this.slotTexts.push(slotText)
     }
 
     // Créer les masques seulement pour ceux qu'on possède ET qui sont dans les dangers du contrat
     const maskSpacing = 80
-    const maskStartY = 560
+    const maskStartY = 40
 
     // Filtrer les masques possédés qui correspondent aux dangers du contrat
     const ownedMasksForContract = contract.knownDangers.filter((dangerId) =>
@@ -264,7 +291,7 @@ export class GameState extends Phaser.Scene {
       // Créer le slot d'inventaire visuel
       const inventorySlot = this.add.rectangle(inventoryX, inventoryY, 65, 65, 0x333333, 0.6)
       inventorySlot.setStrokeStyle(2, 0x666666)
-      inventorySlot.setDepth(9)
+      inventorySlot.setDepth(29)
 
       // Stocker la position du slot d'inventaire
       this.inventorySlots.set(maskId, { x: inventoryX, y: inventoryY })
@@ -278,7 +305,7 @@ export class GameState extends Phaser.Scene {
       const maskRect = this.add.rectangle(mask.x, mask.y, 55, 55, danger.color)
       maskRect.setStrokeStyle(3, 0xffffff)
       maskRect.setInteractive({ draggable: true, useHandCursor: true })
-      maskRect.setDepth(10)
+      maskRect.setDepth(30)
 
       const maskText = this.add.text(mask.x, mask.y, danger.label[0], {
         fontSize: '28px',
@@ -286,7 +313,7 @@ export class GameState extends Phaser.Scene {
         fontStyle: 'bold',
       })
       maskText.setOrigin(0.5, 0.5)
-      maskText.setDepth(11)
+      maskText.setDepth(31)
 
       this.maskObjects.set(mask.id, { rect: maskRect, text: maskText })
 
@@ -325,87 +352,93 @@ export class GameState extends Phaser.Scene {
       }
     )
 
-    this.input.on('dragend', (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      if (gameObject === rect) {
-        let placed = false
+    this.input.on(
+      'dragend',
+      (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+        if (gameObject === rect) {
+          let placed = false
 
-        for (let i = 0; i < this.slots.length; i++) {
-          const slot = this.slots[i]
+          for (let i = 0; i < this.slots.length; i++) {
+            const slot = this.slots[i]
 
-          // Utiliser les bounding boxes pour détecter le chevauchement
-          const maskBounds = rect.getBounds()
-          const slotBounds = slot.getBounds()
-          const isOverlapping = Phaser.Geom.Rectangle.Overlaps(maskBounds, slotBounds)
+            // Utiliser les bounding boxes pour détecter le chevauchement
+            const maskBounds = rect.getBounds()
+            const slotBounds = slot.getBounds()
+            const isOverlapping = Phaser.Geom.Rectangle.Overlaps(maskBounds, slotBounds)
 
-          if (isOverlapping) {
-            // Vérifier si ce slot contient déjà un masque
-            const existingMaskId = this.slotMasks.get(i)
-            if (existingMaskId && existingMaskId !== mask.id) {
-              // Retourner l'ancien masque à son slot d'inventaire propre
-              const existingMask = this.masks.find((m) => m.id === existingMaskId)
-              const existingMaskObj = this.maskObjects.get(existingMaskId)
+            if (isOverlapping) {
+              // Vérifier si ce slot contient déjà un masque
+              const existingMaskId = this.slotMasks.get(i)
+              if (existingMaskId && existingMaskId !== mask.id) {
+                // Retourner l'ancien masque à son slot d'inventaire propre
+                const existingMask = this.masks.find((m) => m.id === existingMaskId)
+                const existingMaskObj = this.maskObjects.get(existingMaskId)
 
-              if (existingMask && existingMaskObj) {
-                const existingInventoryPos = this.inventorySlots.get(existingMaskId) || { x: 400, y: 560 }
-                existingMaskObj.rect.x = existingInventoryPos.x
-                existingMaskObj.rect.y = existingInventoryPos.y
-                existingMaskObj.text.x = existingInventoryPos.x
-                existingMaskObj.text.y = existingInventoryPos.y
-                existingMask.isPlaced = false
-                existingMask.slotIndex = undefined
-                existingMask.x = existingInventoryPos.x
-                existingMask.y = existingInventoryPos.y
+                if (existingMask && existingMaskObj) {
+                  const existingInventoryPos = this.inventorySlots.get(existingMaskId) || {
+                    x: 400,
+                    y: 560,
+                  }
+                  existingMaskObj.rect.x = existingInventoryPos.x
+                  existingMaskObj.rect.y = existingInventoryPos.y
+                  existingMaskObj.text.x = existingInventoryPos.x
+                  existingMaskObj.text.y = existingInventoryPos.y
+                  existingMask.isPlaced = false
+                  existingMask.slotIndex = undefined
+                  existingMask.x = existingInventoryPos.x
+                  existingMask.y = existingInventoryPos.y
+                }
               }
-            }
 
-            // Retirer ce masque de son ancien slot s'il y en avait un
+              // Retirer ce masque de son ancien slot s'il y en avait un
+              if (mask.isPlaced && mask.slotIndex !== undefined) {
+                this.slotMasks.delete(mask.slotIndex)
+                this.slots[mask.slotIndex].setFillStyle(0x666666, 0.8)
+                this.slotTexts[mask.slotIndex].setText(`${mask.slotIndex + 1}`)
+              }
+
+              // Placer le masque sur le nouveau slot
+              rect.x = slot.x
+              rect.y = slot.y
+              text.x = slot.x
+              text.y = slot.y
+              mask.isPlaced = true
+              mask.slotIndex = i
+              mask.x = rect.x
+              mask.y = rect.y
+
+              // Mettre à jour le mapping slot -> masque
+              this.slotMasks.set(i, mask.id)
+              slot.setFillStyle(0x00ff00, 0.5)
+              this.slotTexts[i].setVisible(false)
+
+              placed = true
+              break
+            }
+          }
+
+          // Si pas placé sur un slot de forage, retourner au slot d'inventaire
+          if (!placed) {
             if (mask.isPlaced && mask.slotIndex !== undefined) {
               this.slotMasks.delete(mask.slotIndex)
               this.slots[mask.slotIndex].setFillStyle(0x666666, 0.8)
-              this.slotTexts[mask.slotIndex].setText(`${mask.slotIndex + 1}`)
+              this.slotTexts[mask.slotIndex].setVisible(true)
             }
 
-            // Placer le masque sur le nouveau slot
-            rect.x = slot.x
-            rect.y = slot.y
-            text.x = slot.x
-            text.y = slot.y
-            mask.isPlaced = true
-            mask.slotIndex = i
-            mask.x = rect.x
-            mask.y = rect.y
-
-            // Mettre à jour le mapping slot -> masque
-            this.slotMasks.set(i, mask.id)
-            slot.setFillStyle(0x00ff00, 0.5)
-            this.slotTexts[i].setText('')
-
-            placed = true
-            break
+            // Retourner au slot d'inventaire du masque
+            const inventoryPos = getOriginalPosition()
+            rect.x = inventoryPos.x
+            rect.y = inventoryPos.y
+            text.x = inventoryPos.x
+            text.y = inventoryPos.y
+            mask.isPlaced = false
+            mask.slotIndex = undefined
+            mask.x = inventoryPos.x
+            mask.y = inventoryPos.y
           }
-        }
-
-        // Si pas placé sur un slot de forage, retourner au slot d'inventaire
-        if (!placed) {
-          if (mask.isPlaced && mask.slotIndex !== undefined) {
-            this.slotMasks.delete(mask.slotIndex)
-            this.slots[mask.slotIndex].setFillStyle(0x666666, 0.8)
-            this.slotTexts[mask.slotIndex].setText(`${mask.slotIndex + 1}`)
-          }
-
-          // Retourner au slot d'inventaire du masque
-          const inventoryPos = getOriginalPosition()
-          rect.x = inventoryPos.x
-          rect.y = inventoryPos.y
-          text.x = inventoryPos.x
-          text.y = inventoryPos.y
-          mask.isPlaced = false
-          mask.slotIndex = undefined
-          mask.x = inventoryPos.x
-          mask.y = inventoryPos.y
         }
       }
-    })
+    )
   }
 
   private displayLayers() {
@@ -419,6 +452,27 @@ export class GameState extends Phaser.Scene {
 
     // Reset le step de bruit
     this.lastNoiseStep = 0
+
+    // Couche actuelle
+    if (this.currentLayerIndex < contract.layers.length) {
+      const layer = contract.layers[this.currentLayerIndex]
+      this.currentLayer = layer
+      const imageKey = this.getLayerImageKey(layer)
+      const image = this.add.image(400, 300, imageKey)
+      image.setOrigin(0.5, 0.5)
+      image.setDisplaySize(800, 600)
+      image.setDepth(-1)
+
+      // Appliquer un filtre de couleur si c'est une couche de danger
+      if (layer.type === 'danger' && layer.dangerId) {
+        const danger = getDangerById(layer.dangerId)
+        if (danger) {
+          image.setTint(danger.color)
+        }
+      }
+
+      this.currentLayerRect = image
+    }
 
     // Déterminer le layer suivant pour l'afficher en dessous
     const nextIndex = this.currentLayerIndex + 1
@@ -440,55 +494,27 @@ export class GameState extends Phaser.Scene {
       }
 
       this.nextLayerBg = nextImage
-    } else {
-      // Fallback si pas de couche suivante
-      const fallbackRect = this.add.rectangle(0, 0, 800, 600, 0x8b4513)
-      fallbackRect.setOrigin(0, 0)
-      fallbackRect.setDepth(-2)
-      this.nextLayerBg = fallbackRect
-    }
-
-    // Couche actuelle
-    if (this.currentLayerIndex === -1) {
-      const rect = this.add.rectangle(0, 0, 800, 600, 0x8b4513)
-      rect.setOrigin(0, 0)
-      rect.setDepth(-1)
-      this.currentLayerRect = rect
-      this.currentLayer = { id: -1, type: 'normal', hardness: 3 }
-    } else if (this.currentLayerIndex < contract.layers.length) {
-      const layer = contract.layers[this.currentLayerIndex]
-      this.currentLayer = layer
-      const imageKey = this.getLayerImageKey(layer)
-      const image = this.add.image(400, 300, imageKey)
-      image.setOrigin(0.5, 0.5)
-      image.setDisplaySize(800, 600)
-      image.setDepth(-1)
-
-      // Appliquer un filtre de couleur si c'est une couche de danger
-      if (layer.type === 'danger' && layer.dangerId) {
-        const danger = getDangerById(layer.dangerId)
-        if (danger) {
-          image.setTint(danger.color)
-        }
-      }
-
-      this.currentLayerRect = image
     }
 
     // Créer le RenderTexture pour le masque (même position et taille)
+    // Position en profondeur avec effet de parallaxe 3D
     this.maskTexture = this.add.renderTexture(0, 0, 800, 600)
     this.maskTexture.setOrigin(0, 0)
     this.maskTexture.fill(0xffffff, 1)
     this.maskTexture.setVisible(false)
+    this.maskTexture.setDepth(2) // Au-dessus du layer mais sous le drill
 
     // Graphics pour dessiner les trous de bruit (invisible, sert juste pour erase)
     this.noiseGraphics = this.add.graphics()
     this.noiseGraphics.setVisible(false)
+    this.noiseGraphics.setDepth(2)
 
     // Appliquer le masque bitmap à la couche actuelle
     const mask = new Phaser.Display.Masks.BitmapMask(this, this.maskTexture)
-    if (this.currentLayerRect instanceof Phaser.GameObjects.Rectangle ||
-        this.currentLayerRect instanceof Phaser.GameObjects.Image) {
+    if (
+      this.currentLayerRect instanceof Phaser.GameObjects.Rectangle ||
+      this.currentLayerRect instanceof Phaser.GameObjects.Image
+    ) {
       this.currentLayerRect.setMask(mask)
     }
   }
@@ -504,6 +530,30 @@ export class GameState extends Phaser.Scene {
     return `layer-${layerType}-${imageName}`
   }
 
+  private createOilParticles() {
+    // Créer un système de particules pour la terre
+    this.oilParticles = this.add.particles(
+      0,
+      0,
+      // this.driller.x + this.driller.width / 2,
+      // this.driller.y + this.driller.height,
+      'oil-particle',
+      {
+        x: 0,
+        y: 0,
+        lifespan: { min: 300, max: 800 },
+        speed: { min: 50, max: 200 },
+        angle: { min: -20, max: -160 },
+        scale: { start: 1, end: 0 },
+        alpha: { start: 1, end: 0 },
+        quantity: 6,
+        frequency: -1, // émission manuelle
+        blendMode: Phaser.BlendModes.NORMAL,
+      }
+    )
+    this.oilParticles.setDepth(10)
+    this.oilParticles.emitParticleAt(200, 200)
+  }
 
   private getLayerLabel(layer: Layer): string {
     if (layer.type === 'normal') return 'Normal'
@@ -515,7 +565,6 @@ export class GameState extends Phaser.Scene {
   }
 
   private getLayerDescription(): string {
-    if (this.currentLayerIndex === -1) return 'Surface - Stage 0'
     const contract = this.gameStore.contract
     if (!contract) return ''
     const layer = contract.layers[this.currentLayerIndex]
@@ -523,11 +572,19 @@ export class GameState extends Phaser.Scene {
   }
 
   private shakeEffect() {
-    const shakeAmount = 2
+    const shakeAmount = 6
     this.driller.x = 400 + Phaser.Math.Between(-shakeAmount, shakeAmount)
-    this.driller.y = 300 + Phaser.Math.Between(-shakeAmount, shakeAmount)
+    this.driller.y = 520 + Phaser.Math.Between(-shakeAmount, shakeAmount)
     this.drillerText.x = this.driller.x
     this.drillerText.y = this.driller.y
+  }
+
+  /**
+   * Changer la stratégie d'animation du cassage de couche
+   * Utile pour tester différents effets visuels
+   */
+  public setLayerBreakAnimation(animation: LayerBreakAnimation): void {
+    this.layerBreakAnimation = animation
   }
 
   private breakLayer() {
@@ -559,19 +616,29 @@ export class GameState extends Phaser.Scene {
     this.drillingProgress = 0
     this.lastNoiseStep = 0
     this.driller.x = 400
-    this.driller.y = 300
+    this.driller.y = 520
     this.drillerText.x = 400
-    this.drillerText.y = 300
+    this.drillerText.y = 520
 
     this.currentLayerIndex++
 
     if (this.currentLayerIndex >= contract.layers.length) {
       this.completeContract()
     } else {
-      this.resetMasksInSlots()
+      // this.resetMasksInSlots()
+
+      // Sauvegarder les références avant d'appeler displayLayers
+      const oldCurrentLayer = this.currentLayerRect
       this.displayLayers()
-      this.layerText.setText(this.getLayerDescription())
-      this.cameras.main.flash(200, 255, 255, 255)
+      const newCurrentLayer = this.currentLayerRect
+
+      // Appliquer l'animation du cassage
+      this.layerBreakAnimation.animate(
+        this,
+        oldCurrentLayer as Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image,
+        newCurrentLayer as Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image,
+        () => {}
+      )
     }
   }
 
@@ -706,3 +773,5 @@ export class GameState extends Phaser.Scene {
     }
   }
 }
+
+export default GameState
