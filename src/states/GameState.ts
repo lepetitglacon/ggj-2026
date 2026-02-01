@@ -2,6 +2,7 @@ import Phaser from 'phaser'
 import { useEngineStore } from '../store/engine'
 import { useGameStore } from '../store/game.store'
 import { useInventoryStore } from '../store/inventory.store'
+import { usePlacedMasksStore } from '../store/placed-masks.store'
 import { getDangerById } from '../data/dangers'
 import type { Layer } from '../data/layers'
 import type { Mask } from '../data/masks'
@@ -14,6 +15,7 @@ class GameState extends Phaser.Scene {
   private gameStore = useGameStore()
   private engineStore = useEngineStore()
   private inventoryStore = useInventoryStore()
+  private placedMasksStore = usePlacedMasksStore()
 
   // Positions globales
   private readonly DRILL_X = 400
@@ -27,6 +29,7 @@ class GameState extends Phaser.Scene {
   private driller!: Phaser.GameObjects.Image
   private drillerDude!: Phaser.GameObjects.Image
   private drillerDudeHands!: Phaser.GameObjects.Image
+  private drillerMask!: Phaser.GameObjects.Image | null // Masque sur la tête du driller
   private drillerText!: Phaser.GameObjects.Text
   private currentLayerRect!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
   private layerText!: Phaser.GameObjects.Text
@@ -35,11 +38,7 @@ class GameState extends Phaser.Scene {
   // Slots et masques
   private slots: Phaser.GameObjects.Rectangle[] = []
   private slotTexts: Phaser.GameObjects.Text[] = []
-  private slotMasks: Map<number, string> = new Map()
-  private maskObjects: Map<
-    string,
-    { rect: Phaser.GameObjects.Rectangle; text: Phaser.GameObjects.Text }
-  > = new Map()
+  private maskObjects: Map<string, { image: Phaser.GameObjects.Image }> = new Map()
   private masks: Mask[] = []
   private inventorySlots: Map<string, { x: number; y: number }> = new Map() // Slots d'inventaire pour chaque masque
 
@@ -74,6 +73,27 @@ class GameState extends Phaser.Scene {
     this.load.image('driller-reduced-hands', 'img/driller/driller.reduced.hands.png')
     this.load.image('oil-particle', 'img/particles/oil.png')
     this.load.image('dirt-particle', 'img/particles/dirt.png')
+
+    // Précharger les images de masques
+    // Pour chaque danger, charger mask-{label}.png et mask-driller-{label}.png
+    const maskTypes = [
+      { id: '1', name: 'toxique' },
+      { id: '2', name: 'explosion' },
+      { id: '3', name: 'radiation' },
+      { id: '4', name: 'acide' },
+      { id: '5', name: 'flammable' },
+      { id: '6', name: 'biohazard' },
+    ]
+
+    maskTypes.forEach((maskType) => {
+      // Masque dans l'inventaire
+      this.load.image(`mask-${maskType.id}`, `img/masks/icon/mask-${maskType.name}.png`)
+      // Masque sur le driller
+      this.load.image(
+        `mask-driller-${maskType.id}`,
+        `img/masks/driller/mask-driller-${maskType.name}.png`
+      )
+    })
   }
 
   init() {
@@ -298,17 +318,18 @@ class GameState extends Phaser.Scene {
     if (!contract) return
 
     const slotCount = this.inventoryStore.maskSlots
-    const slotSize = 60
+    const slotSize = 80
     const slotSpacing = 80
     const startX = this.DRILL_X - ((slotCount - 1) * slotSpacing) / 2
-    const slotY = 150 // Au-dessus du drill
+    const slotY = 240 // Au-dessus du drill
 
     // Créer les slots en bas
     for (let i = 0; i < slotCount; i++) {
       const x = startX + i * slotSpacing
-      const slot = this.add.rectangle(x, slotY, slotSize, slotSize, 0x666666, 0.8)
-      slot.setStrokeStyle(3, 0xffffff)
+      const slot = this.add.rectangle(x, slotY, slotSize, slotSize, 0x00ff00, 0.01)
+      // slot.setStrokeStyle(3, 0xffffff)
       slot.setDepth(20)
+      slot.setInteractive({ draggable: true, useHandCursor: true })
       this.slots.push(slot)
 
       const slotText = this.add.text(x, slotY, `${i + 1}`, {
@@ -320,6 +341,9 @@ class GameState extends Phaser.Scene {
       slotText.setDepth(21)
       this.slotTexts.push(slotText)
     }
+
+    // Configurer le drag & drop pour les slots du centre
+    this.setupSlotDragDrop()
 
     // Créer les masques seulement pour ceux qu'on possède ET qui sont dans les dangers du contrat
     const maskSpacing = 80
@@ -344,8 +368,8 @@ class GameState extends Phaser.Scene {
       const inventoryY = maskStartY
 
       // Créer le slot d'inventaire visuel
-      const inventorySlot = this.add.rectangle(inventoryX, inventoryY, 65, 65, 0x333333, 0.6)
-      inventorySlot.setStrokeStyle(2, 0x666666)
+      const inventorySlot = this.add.rectangle(inventoryX, inventoryY, 65, 65, 0x00ff00, 0.01)
+      inventorySlot.setStrokeStyle(2, 0x00ff00)
       inventorySlot.setDepth(29)
 
       // Stocker la position du slot d'inventaire
@@ -356,39 +380,111 @@ class GameState extends Phaser.Scene {
       mask.y = inventoryY
       this.masks.push(mask)
 
-      // Créer l'objet visuel
-      const maskRect = this.add.rectangle(mask.x, mask.y, 55, 55, danger.color)
-      maskRect.setStrokeStyle(3, 0xffffff)
-      maskRect.setInteractive({ draggable: true, useHandCursor: true })
-      maskRect.setDepth(30)
+      // Créer l'objet visuel (image du masque)
+      const maskImage = this.add.image(mask.x, mask.y, `mask-${dangerId}`)
+      maskImage.setOrigin(0.5, 0.5)
+      maskImage.setDisplaySize(55, 55)
+      maskImage.setInteractive({ draggable: true, useHandCursor: true })
+      maskImage.setDepth(30)
 
-      const maskText = this.add.text(mask.x, mask.y, danger.label[0], {
-        fontSize: '28px',
-        color: '#ffffff',
-        fontStyle: 'bold',
-      })
-      maskText.setOrigin(0.5, 0.5)
-      maskText.setDepth(31)
+      this.maskObjects.set(mask.id, { image: maskImage })
+    })
 
-      this.maskObjects.set(mask.id, { rect: maskRect, text: maskText })
+    // Configurer le drag & drop pour les masques de l'inventaire
+    this.setupInventoryMaskDragDrop()
+  }
 
-      // Drag & Drop
-      this.setupMaskDragDrop(mask, maskRect, maskText)
+  private setupSlotDragDrop() {
+    let currentDraggedSlot: Phaser.GameObjects.Rectangle | null = null
+    let currentDraggedImage: Phaser.GameObjects.Image | null = null
+    let currentDraggedMask: Mask | null = null
+    let currentSlotIndex: number = -1
+
+    this.input.on('dragstart', (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      const slotIndex = this.slots.indexOf(gameObject as Phaser.GameObjects.Rectangle)
+      if (slotIndex !== -1) {
+        const maskId = this.placedMasksStore.getMaskInSlot(slotIndex)
+        if (maskId) {
+          const mask = this.masks.find((m) => m.id === maskId)
+          const maskObj = this.maskObjects.get(maskId)
+          if (mask && maskObj) {
+            currentDraggedSlot = gameObject as Phaser.GameObjects.Rectangle
+            currentDraggedMask = mask
+            currentDraggedImage = maskObj.image
+            currentSlotIndex = slotIndex
+            // Afficher l'image du masque et la rendre visible
+            currentDraggedImage.setAlpha(1)
+            currentDraggedImage.setDepth(50)
+          }
+        }
+      }
+    })
+
+    this.input.on(
+      'drag',
+      (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject, dragX: number, dragY: number) => {
+        if (gameObject === currentDraggedSlot && currentDraggedImage) {
+          currentDraggedImage.x = dragX
+          currentDraggedImage.y = dragY
+        }
+      }
+    )
+
+    this.input.on('dragend', (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      if (gameObject === currentDraggedSlot && currentDraggedMask && currentDraggedImage) {
+        let placedInInventory = false
+
+        // Vérifier si on lâche sur un slot d'inventaire
+        const inventoryPos = this.inventorySlots.get(currentDraggedMask.id)
+        if (inventoryPos) {
+          const distance = Phaser.Math.Distance.Between(
+            currentDraggedImage.x,
+            currentDraggedImage.y,
+            inventoryPos.x,
+            inventoryPos.y
+          )
+          if (distance < 50) {
+            // Placer le masque dans l'inventaire
+            currentDraggedImage.x = inventoryPos.x
+            currentDraggedImage.y = inventoryPos.y
+            currentDraggedImage.setAlpha(1)
+            currentDraggedImage.setVisible(true)
+            currentDraggedMask.isPlaced = false
+            currentDraggedMask.slotIndex = undefined
+            currentDraggedMask.x = inventoryPos.x
+            currentDraggedMask.y = inventoryPos.y
+            placedInInventory = true
+          }
+        }
+
+        // Si on n'a pas lâché sur l'inventaire, masquer l'image à nouveau
+        if (!placedInInventory) {
+          currentDraggedImage.setAlpha(0)
+          currentDraggedImage.setVisible(true)
+        }
+
+        // Retirer le masque du slot du centre et rendre le slot numéroté à nouveau
+        if (currentSlotIndex !== -1) {
+          this.placedMasksStore.removeMaskFromSlot(currentSlotIndex)
+          this.slotTexts[currentSlotIndex].setVisible(true)
+          // Toujours mettre à jour le driller quand on retire un masque
+          this.updateDrillerMask(null)
+        }
+
+        currentDraggedSlot = null
+        currentDraggedImage = null
+        currentDraggedMask = null
+        currentSlotIndex = -1
+      }
     })
   }
 
-  private setupMaskDragDrop(
-    mask: Mask,
-    rect: Phaser.GameObjects.Rectangle,
-    text: Phaser.GameObjects.Text
-  ) {
-    const getOriginalPosition = () => {
-      const slot = this.inventorySlots.get(mask.id)
-      if (slot) {
-        return { x: slot.x, y: slot.y }
-      }
-      return { x: this.DRILL_X, y: this.DRILL_Y + 110 }
-    }
+  private setupInventoryMaskDragDrop() {
+    const masks = this.masks
+    const maskObjects = this.maskObjects
+    const inventorySlots = this.inventorySlots
+    const slots = this.slots
+    const slotTexts = this.slotTexts
 
     this.input.on(
       'drag',
@@ -398,11 +494,12 @@ class GameState extends Phaser.Scene {
         dragX: number,
         dragY: number
       ) => {
-        if (gameObject === rect) {
-          rect.x = dragX
-          rect.y = dragY
-          text.x = dragX
-          text.y = dragY
+        // Chercher si c'est un masque de l'inventaire
+        for (const [maskId, maskObj] of maskObjects.entries()) {
+          if (maskObj.image === gameObject) {
+            maskObj.image.x = dragX
+            maskObj.image.y = dragY
+          }
         }
       }
     )
@@ -410,90 +507,124 @@ class GameState extends Phaser.Scene {
     this.input.on(
       'dragend',
       (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-        if (gameObject === rect) {
-          let placed = false
+        // Chercher quel masque est en train d'être traîné
+        let draggedMask: Mask | null = null
+        let draggedImage: Phaser.GameObjects.Image | null = null
 
-          for (let i = 0; i < this.slots.length; i++) {
-            const slot = this.slots[i]
+        for (const [maskId, maskObj] of maskObjects.entries()) {
+          if (maskObj.image === gameObject) {
+            draggedMask = masks.find((m) => m.id === maskId) || null
+            draggedImage = maskObj.image
+            break
+          }
+        }
 
-            // Utiliser les bounding boxes pour détecter le chevauchement
-            const maskBounds = rect.getBounds()
-            const slotBounds = slot.getBounds()
-            const isOverlapping = Phaser.Geom.Rectangle.Overlaps(maskBounds, slotBounds)
+        if (!draggedMask || !draggedImage) return
 
-            if (isOverlapping) {
-              // Vérifier si ce slot contient déjà un masque
-              const existingMaskId = this.slotMasks.get(i)
-              if (existingMaskId && existingMaskId !== mask.id) {
-                // Retourner l'ancien masque à son slot d'inventaire propre
-                const existingMask = this.masks.find((m) => m.id === existingMaskId)
-                const existingMaskObj = this.maskObjects.get(existingMaskId)
+        let placedInSlot = false
 
-                if (existingMask && existingMaskObj) {
-                  const existingInventoryPos = this.inventorySlots.get(existingMaskId) || {
-                    x: this.DRILL_X,
-                    y: this.DRILL_Y + 110,
-                  }
-                  existingMaskObj.rect.x = existingInventoryPos.x
-                  existingMaskObj.rect.y = existingInventoryPos.y
-                  existingMaskObj.text.x = existingInventoryPos.x
-                  existingMaskObj.text.y = existingInventoryPos.y
-                  existingMask.isPlaced = false
-                  existingMask.slotIndex = undefined
-                  existingMask.x = existingInventoryPos.x
-                  existingMask.y = existingInventoryPos.y
+        // Vérifier si on lâche sur un slot du centre
+        for (let i = 0; i < slots.length; i++) {
+          const slot = slots[i]
+          const maskBounds = draggedImage.getBounds()
+          const slotBounds = slot.getBounds()
+          const isOverlapping = Phaser.Geom.Rectangle.Overlaps(maskBounds, slotBounds)
+
+          if (isOverlapping) {
+            // Vérifier si le slot contient déjà un masque
+            const existingMaskId = this.placedMasksStore.getMaskInSlot(i)
+            if (existingMaskId && existingMaskId !== draggedMask.id) {
+              // Swap : retourner l'ancien masque à l'inventaire
+              const existingMask = masks.find((m) => m.id === existingMaskId)
+              const existingMaskObj = maskObjects.get(existingMaskId)
+
+              if (existingMask && existingMaskObj) {
+                const existingInventoryPos = inventorySlots.get(existingMaskId) || {
+                  x: this.DRILL_X,
+                  y: this.DRILL_Y + 110,
                 }
+                existingMaskObj.image.x = existingInventoryPos.x
+                existingMaskObj.image.y = existingInventoryPos.y
+                existingMaskObj.image.setAlpha(1)
+                existingMaskObj.image.setVisible(true)
+                existingMask.isPlaced = false
+                existingMask.slotIndex = undefined
+                existingMask.x = existingInventoryPos.x
+                existingMask.y = existingInventoryPos.y
               }
-
-              // Retirer ce masque de son ancien slot s'il y en avait un
-              if (mask.isPlaced && mask.slotIndex !== undefined) {
-                this.slotMasks.delete(mask.slotIndex)
-                this.slots[mask.slotIndex].setFillStyle(0x666666, 0.8)
-                this.slotTexts[mask.slotIndex].setText(`${mask.slotIndex + 1}`)
-              }
-
-              // Placer le masque sur le nouveau slot
-              rect.x = slot.x
-              rect.y = slot.y
-              text.x = slot.x
-              text.y = slot.y
-              mask.isPlaced = true
-              mask.slotIndex = i
-              mask.x = rect.x
-              mask.y = rect.y
-
-              // Mettre à jour le mapping slot -> masque
-              this.slotMasks.set(i, mask.id)
-              slot.setFillStyle(0x00ff00, 0.5)
-              this.slotTexts[i].setVisible(false)
-
-              placed = true
-              break
-            }
-          }
-
-          // Si pas placé sur un slot de forage, retourner au slot d'inventaire
-          if (!placed) {
-            if (mask.isPlaced && mask.slotIndex !== undefined) {
-              this.slotMasks.delete(mask.slotIndex)
-              this.slots[mask.slotIndex].setFillStyle(0x666666, 0.8)
-              this.slotTexts[mask.slotIndex].setVisible(true)
             }
 
-            // Retourner au slot d'inventaire du masque
-            const inventoryPos = getOriginalPosition()
-            rect.x = inventoryPos.x
-            rect.y = inventoryPos.y
-            text.x = inventoryPos.x
-            text.y = inventoryPos.y
-            mask.isPlaced = false
-            mask.slotIndex = undefined
-            mask.x = inventoryPos.x
-            mask.y = inventoryPos.y
+            // Placer le nouveau masque dans le slot
+            draggedMask.isPlaced = true
+            draggedMask.slotIndex = i
+            draggedMask.x = slot.x
+            draggedMask.y = slot.y
+            this.placedMasksStore.setMaskInSlot(i, draggedMask.id)
+            slotTexts[i].setVisible(false)
+
+            // Masquer l'image du masque
+            draggedImage.setAlpha(0)
+
+            // Afficher le masque sur le driller
+            this.updateDrillerMask(draggedMask.dangerId)
+
+            placedInSlot = true
+            break
           }
+        }
+
+        // Si pas placé sur un slot, retourner à l'inventaire
+        if (!placedInSlot) {
+          if (draggedMask.isPlaced && draggedMask.slotIndex !== undefined) {
+            this.placedMasksStore.removeMaskFromSlot(draggedMask.slotIndex)
+            slotTexts[draggedMask.slotIndex].setVisible(true)
+            this.updateDrillerMask(null)
+          }
+
+          const inventoryPos = inventorySlots.get(draggedMask.id) || {
+            x: this.DRILL_X,
+            y: this.DRILL_Y + 110,
+          }
+          draggedImage.x = inventoryPos.x
+          draggedImage.y = inventoryPos.y
+          draggedImage.setAlpha(1)
+          draggedImage.setVisible(true)
+          draggedMask.isPlaced = false
+          draggedMask.slotIndex = undefined
+          draggedMask.x = inventoryPos.x
+          draggedMask.y = inventoryPos.y
         }
       }
     )
+  }
+
+  private updateDrillerMask(dangerId: string | null = null) {
+    // Détruire le masque précédent s'il existe
+    if (this.drillerMask) {
+      this.drillerMask.destroy()
+      this.drillerMask = null
+    }
+
+    // Trouver le premier masque placé si dangerId n'est pas fourni
+    let activeDangerId = dangerId
+    if (!activeDangerId) {
+      const firstPlacedMask = this.masks.find((m) => m.isPlaced)
+      if (firstPlacedMask) {
+        activeDangerId = firstPlacedMask.dangerId
+      }
+    }
+
+    // Si un masque est placé, afficher l'image du masque sur le driller
+    if (activeDangerId) {
+      this.drillerMask = this.add.image(
+        this.DRILL_X,
+        this.DRILL_Y - 80,
+        `mask-driller-${activeDangerId}`
+      )
+      this.drillerMask.setOrigin(0.5, 0.5)
+      this.drillerMask.setScale(0.7, 0.7)
+      this.drillerMask.setDepth(5) // Au-dessus du driller mais sous les particules
+    }
   }
 
   private displayLayers() {
@@ -710,6 +841,12 @@ class GameState extends Phaser.Scene {
       this.DRILL_X + Phaser.Math.Between(-handsShakeAmount, handsShakeAmount)
     this.drillerDudeHands.y =
       this.DRILL_Y - 80 + Phaser.Math.Between(-handsShakeAmount, handsShakeAmount)
+
+    // Trembler le masque si présent
+    if (this.drillerMask) {
+      this.drillerMask.x = this.drillerDude.x
+      this.drillerMask.y = this.drillerDude.y
+    }
   }
 
   /**
@@ -779,40 +916,31 @@ class GameState extends Phaser.Scene {
     // Remettre tous les masques à leur position d'inventaire
     this.masks.forEach((mask) => {
       if (mask.isPlaced && mask.slotIndex !== undefined) {
-        const maskObj = this.maskObjects.get(mask.id)
         const slotIndex = mask.slotIndex
         const slot = this.slots[slotIndex]
+        const maskObj = this.maskObjects.get(mask.id)
 
-        if (maskObj && slot && this.slotTexts[slotIndex]) {
-          // Retourner le masque à son inventaire
-          const inventoryPos = this.inventorySlots.get(mask.id) || {
-            x: this.DRILL_X,
-            y: this.DRILL_Y + 110,
-          }
-          maskObj.rect.x = inventoryPos.x
-          maskObj.rect.y = inventoryPos.y
-          maskObj.text.x = inventoryPos.x
-          maskObj.text.y = inventoryPos.y
-
+        if (slot && this.slotTexts[slotIndex]) {
           // Réinitialiser le slot
-          slot.setFillStyle(0x666666, 0.8)
-          this.slotTexts[slotIndex].setText(`${slotIndex + 1}`)
+          this.slotTexts[slotIndex].setVisible(true)
 
           // Supprimer du mapping slot -> masque
-          this.slotMasks.delete(slotIndex)
+          this.placedMasksStore.removeMaskFromSlot(slotIndex)
+        }
+
+        // Rendre visible l'image du masque
+        if (maskObj) {
+          maskObj.image.setAlpha(1)
         }
 
         // Réinitialiser l'état du masque
         mask.isPlaced = false
         mask.slotIndex = undefined
-        const inventoryPos = this.inventorySlots.get(mask.id) || {
-          x: this.DRILL_X,
-          y: this.DRILL_Y + 110,
-        }
-        mask.x = inventoryPos.x
-        mask.y = inventoryPos.y
       }
     })
+
+    // Retirer le masque du driller
+    this.updateDrillerMask(null)
   }
 
   private gainOilForLayer(layerIndex: number) {
@@ -841,15 +969,16 @@ class GameState extends Phaser.Scene {
       fontFamily: 'Arial',
     })
     text.setOrigin(0.5, 0.5)
+    text.setPosition(400, 500)
     text.setDepth(20)
 
     // Animation de montée + fade
     this.tweens.add({
       targets: text,
-      y: 150,
+      y: 375,
       alpha: 0,
-      duration: 1500,
-      ease: 'Quad.easeOut',
+      duration: 750,
+      ease: 'Quad.easeIn',
       onComplete: () => {
         text.destroy()
       },
@@ -900,7 +1029,7 @@ class GameState extends Phaser.Scene {
         `Contrat terminé !\n+${contract.oil} barils\n+10 reconnaissance`,
         {
           fontSize: '32px',
-          color: '#00ff00',
+          color: '#0d676c',
           backgroundColor: '#000000',
           padding: { x: 20, y: 10 },
           align: 'center',
