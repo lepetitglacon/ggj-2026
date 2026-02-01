@@ -51,7 +51,7 @@ export const generateLayers = (
     layers.push({
       id: 0,
       type: 'normal',
-      hardness: 3,
+      hardness: 13,
       imageUrl: '/img/layers-pixelated/top/top.png',
     })
 
@@ -59,7 +59,7 @@ export const generateLayers = (
     layers.push({
       id: 1,
       type: 'normal',
-      hardness: 3,
+      hardness: 13,
       imageUrl: '/img/layers-pixelated/normal/1.png',
     })
 
@@ -70,7 +70,7 @@ export const generateLayers = (
         id: index + 2,
         type: 'danger',
         dangerId: dangerId,
-        hardness: 3,
+        hardness: 13,
         imageUrl: dangerImageUrl,
       })
     })
@@ -92,8 +92,8 @@ export const generateLayers = (
 
   for (let i = 0; i < layerCount; i++) {
     const random = Math.random()
-    // Dureté aléatoire entre 3 et 7 secondes
-    const hardness = Math.random() * 4 + 3
+    // Dureté aléatoire entre 13 et 17 secondes
+    const hardness = Math.random() * 4 + 13
 
     // Première couche (index 0) est toujours une couche top (surface)
     let imageUrl: string
