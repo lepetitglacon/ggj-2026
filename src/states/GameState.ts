@@ -48,6 +48,11 @@ class GameState extends Phaser.Scene {
   private initialInventoryCoords: Map<string, { x: number; y: number }> = new Map() // Positions d'origine des slots
   private draggingSlot: Phaser.GameObjects.Rectangle | null = null
 
+  // États des malus
+  private acidLayersRemaining: number = 0
+  private radiationLockedLayers: number = 0
+  private irradiatedMaskId: string | null = null
+
   // Layer suivant et masque de transparence
   private nextLayerBg!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
   private maskTexture!: Phaser.GameObjects.RenderTexture
@@ -171,7 +176,6 @@ class GameState extends Phaser.Scene {
     this.engineStore.changeState('game')
     this.currentLayerIndex = 0
     this.drillingProgress = 0
-    this.lives = 3
     this.toxicClouds = []
     this.activeMalus.clear()
     this.acidLayersRemaining = 0
@@ -179,6 +183,9 @@ class GameState extends Phaser.Scene {
     // Vérifier si c'est le contrat TEST
     const contract = this.gameStore.contract
     this.isTestMode = contract?.title === 'TEST'
+    
+    // 10 vies pour le mode test, 3 sinon
+    this.lives = this.isTestMode ? 10 : 3
   }
 
   create() {
@@ -804,6 +811,16 @@ class GameState extends Phaser.Scene {
         // Chercher si c'est un masque de l'inventaire
         for (const [maskId, maskObj] of maskObjects.entries()) {
           if (maskObj.image === gameObject) {
+            // Vérifier si le masque est irradié et bloqué
+            if (this.irradiatedMaskId === maskId && this.radiationLockedLayers > 0) {
+              // Feedback visuel (limité pour ne pas spammer)
+              if (this.game.getTime() % 500 < 50) {
+                 this.cameras.main.shake(100, 0.005)
+                 emitSound('clic', { rate: 0.5 })
+              }
+              return
+            }
+
             maskObj.image.x = dragX
             maskObj.image.y = dragY
           }
@@ -1170,6 +1187,8 @@ class GameState extends Phaser.Scene {
   }
 
   private breakLayer() {
+    emitSound('rock-crack')
+    
     // Vérifier si on entre dans une zone de danger
     const contract = this.gameStore.contract
     if (!contract) return
@@ -1211,6 +1230,31 @@ class GameState extends Phaser.Scene {
       if (this.acidLayersRemaining === 0) {
         // Remettre la couleur normale du drill
         this.driller.clearTint()
+      }
+    }
+
+    // Décrémenter le compteur de radiation (masque bloqué)
+    if (this.radiationLockedLayers > 0) {
+      this.radiationLockedLayers--
+      if (this.radiationLockedLayers === 0) {
+        // Débloquer le masque irradié
+        if (this.irradiatedMaskId) {
+          const maskObj = this.maskObjects.get(this.irradiatedMaskId)
+          if (maskObj) {
+            maskObj.image.clearTint()
+            
+            // Petit feedback visuel sur le masque libéré
+            this.tweens.add({
+              targets: maskObj.image,
+              scale: 1.2,
+              duration: 200,
+              yoyo: true
+            })
+          }
+          this.irradiatedMaskId = null
+        }
+        
+        emitSound('radar-ok') // Son de déblocage
       }
     }
 
@@ -1554,6 +1598,7 @@ class GameState extends Phaser.Scene {
    */
   private applyExplosionMalus() {
     console.log('💥 MALUS EXPLOSION: Masques dispersés!')
+    emitSound('explosion')
 
     // Afficher un message visuel
     const malusText = this.add.text(400, 200, '💥 EXPLOSION: Masques dispersés!', {
@@ -1657,19 +1702,53 @@ class GameState extends Phaser.Scene {
       },
     })
 
-    // Appliquer un tint blanc à tous les masques pour les décolorer
-    this.maskObjects.forEach((maskObj) => {
-      maskObj.image.setTint(0xffffff)
-
-      // Animation de flash pour l'effet de radiation
-      this.tweens.add({
-        targets: maskObj.image,
-        alpha: 0.5,
-        duration: 200,
-        yoyo: true,
-        repeat: 2,
-      })
-    })
+    // Trouver le masque équipé
+    const equippedMask = this.masks.find(m => m.isPlaced)
+    
+    if (equippedMask) {
+      this.radiationLockedLayers = 5
+      this.irradiatedMaskId = equippedMask.id
+      
+      // Ejecter le masque vers l'inventaire
+      if (equippedMask.slotIndex !== undefined) {
+        const slotIndex = equippedMask.slotIndex
+        this.placedMasksStore.removeMaskFromSlot(slotIndex)
+        this.slotTexts[slotIndex].setVisible(true)
+        equippedMask.isPlaced = false
+        equippedMask.slotIndex = undefined
+      }
+      
+      this.updateDrillerMask(null)
+      
+      // Animer le retour à l'inventaire
+      const maskObj = this.maskObjects.get(equippedMask.id)
+      const inventoryPos = this.inventorySlots.get(equippedMask.id)
+      
+      if (maskObj && inventoryPos) {
+        // Rendre visible (au cas où)
+        maskObj.image.setAlpha(1)
+        maskObj.image.setVisible(true)
+        maskObj.image.setTint(0x00ff00) // Vert fluo
+        
+        // Animation
+        this.tweens.add({
+          targets: maskObj.image,
+          x: inventoryPos.x,
+          y: inventoryPos.y,
+          duration: 500,
+          ease: 'Back.easeOut'
+        })
+        
+        // Update logique pos
+        equippedMask.x = inventoryPos.x
+        equippedMask.y = inventoryPos.y
+      }
+      
+      emitSound('radiation')
+    } else {
+      // Si aucun masque n'est porté, pas de malus spécifique (ou dégâts ?)
+      // Pour l'instant on ne fait rien
+    }
   }
 
   /**

@@ -43,11 +43,14 @@ export const SOUNDS = {
   clic: 'sounds/clic.mp3',
   switch: 'sounds/switch.mp3',
   chat: 'sounds/chat.mp3',
-  radiation: 'sounds/radiation.mp3',
-  fire: 'sounds/fire.mp3',
   'damage-hit': 'sounds/damage-hit.mp3',
   radar: 'sounds/radar.mp3',
   'radar-ok': 'sounds/radar-ok.mp3',
+  'rock-crack': 'sounds/rock-crack.mp3',
+  fire: 'sounds/malus/fire.mp3',
+  radiation: 'sounds/malus/radiation.mp3',
+  explosion: 'sounds/malus/explosion.mp3',
+  'short-gaz-leak': 'sounds/malus/short-gaz-leak.mp3',
 } as const
 
 export type SoundKey = keyof typeof SOUNDS
