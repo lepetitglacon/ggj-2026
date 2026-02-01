@@ -11,6 +11,7 @@ import type { LayerBreakAnimation } from './LayerBreakAnimation'
 import { CrackAnimation } from './LayerBreakAnimation'
 import { preloadSounds, emitSound } from '../listeners/sound.listener'
 import { InvertPipeline } from '../utils/InvertPipeline'
+import { FirePipeline } from '../utils/FirePipeline'
 
 type ParticleEmitter = Phaser.GameObjects.Particles.ParticleEmitter // Animation par défaut
 
@@ -53,6 +54,7 @@ class GameState extends Phaser.Scene {
   private radiationLockedLayers: number = 0
   private irradiatedMaskId: string | null = null
   private acidDrillerAura: Phaser.GameObjects.Image | null = null
+  private fireLayersRemaining: number = 0
 
   // Layer suivant et masque de transparence
   private nextLayerBg!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
@@ -100,6 +102,9 @@ class GameState extends Phaser.Scene {
     const renderer = this.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer
     if (!renderer.pipelines.get('Invert')) {
       renderer.pipelines.addPostPipeline('Invert', InvertPipeline)
+    }
+    if (!renderer.pipelines.get('Fire')) {
+      renderer.pipelines.addPostPipeline('Fire', FirePipeline)
     }
 
     // Précharger l'image du drill
@@ -1285,6 +1290,14 @@ class GameState extends Phaser.Scene {
         emitSound('radar-ok') // Son de déblocage
       }
     }
+    
+    // Décrémenter le compteur de feu
+    if (this.fireLayersRemaining > 0) {
+      this.fireLayersRemaining--
+      if (this.fireLayersRemaining === 0) {
+        this.cameras.main.removePostPipeline('Fire')
+      }
+    }
 
     this.currentLayerIndex++
 
@@ -1830,10 +1843,10 @@ class GameState extends Phaser.Scene {
       alpha: 0.3,
       duration: 500,
       yoyo: true,
-      repeat: -1,
+      repeat: -1
     })
-
-    emitSound('malus/acid') // Si le son existe, sinon generic
+    
+    emitSound('acid')
   }
 
   /**
@@ -1841,6 +1854,7 @@ class GameState extends Phaser.Scene {
    */
   private applyFlammableMalus() {
     console.log('🔥 MALUS FLAMMABLE: Masques calcinés!')
+    emitSound('fire')
 
     // Afficher un message visuel
     const malusText = this.add.text(400, 200, '🔥 FLAMMABLE: Masques brûlés!', {
@@ -1863,6 +1877,10 @@ class GameState extends Phaser.Scene {
         malusText.destroy()
       },
     })
+
+    // Activer le shader de feu pour 2 couches
+    this.cameras.main.setPostPipeline('Fire')
+    this.fireLayersRemaining = 2
 
     // Appliquer un tint noir à tous les masques pour les calciner
     this.maskObjects.forEach((maskObj) => {

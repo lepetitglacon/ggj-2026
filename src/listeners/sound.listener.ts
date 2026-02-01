@@ -50,6 +50,7 @@ export const SOUNDS = {
   fire: 'sounds/malus/fire.mp3',
   radiation: 'sounds/malus/radiation.mp3',
   explosion: 'sounds/malus/explosion.mp3',
+  acid: 'sounds/malus/acid.mp3',
   'short-gaz-leak': 'sounds/malus/short-gaz-leak.mp3',
 } as const
 
@@ -63,13 +64,13 @@ export function initSoundListener(game: Phaser.Game) {
   gameInstance = game
 
   // Écouter l'event 'sound' pour jouer un son par sa clé
-  soundEmitter.on('sound', (key: SoundKey) => {
-    playSound(key)
+  soundEmitter.on('sound', (key: SoundKey, options?: Phaser.Types.Sound.SoundConfig) => {
+    playSound(key, options)
   })
 
   // Écouter l'event 'sound-key' pour jouer un son par sa clé (alias)
-  soundEmitter.on('sound-key', (key: SoundKey) => {
-    playSound(key)
+  soundEmitter.on('sound-key', (key: SoundKey, options?: Phaser.Types.Sound.SoundConfig) => {
+    playSound(key, options)
   })
 }
 
@@ -85,7 +86,7 @@ export function preloadSounds(scene: Phaser.Scene) {
 }
 
 // Jouer un son
-export function playSound(key: SoundKey) {
+export function playSound(key: SoundKey, options?: Phaser.Types.Sound.SoundConfig) {
   if (!gameInstance) {
     console.warn('Sound listener not initialized. Call initSoundListener first.')
     return
@@ -98,8 +99,8 @@ export function playSound(key: SoundKey) {
   }
 
   try {
-    console.log(`[SOUND] Playing: ${key}`)
-    activeScene.sound.play(key)
+    console.log(`[SOUND] Playing: ${key}`, options)
+    activeScene.sound.play(key, options)
   } catch (error) {
     console.warn(`Failed to play sound: ${key}`, error)
   }
@@ -127,6 +128,6 @@ export function stopSound(key: SoundKey) {
 }
 
 // Fonction utilitaire pour émettre un son depuis n'importe où
-export function emitSound(key: SoundKey) {
-  soundEmitter.emit('sound', key)
+export function emitSound(key: SoundKey, options?: Phaser.Types.Sound.SoundConfig) {
+  soundEmitter.emit('sound', key, options)
 }
