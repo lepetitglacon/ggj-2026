@@ -58,11 +58,16 @@ class GameState extends Phaser.Scene {
   private fireLayersRemaining: number = 0
   private fireHealth: number = 0
   private fireHitbox: Phaser.GameObjects.Rectangle | null = null
-  
+
   // Bio-Hazard state
   private infectedMaskId: string | null = null
   private infectionLevel: number = 0
   private lastDragPosition: { x: number; y: number } | null = null
+
+  // Toxic state
+  private toxicSpawnerEvent: Phaser.Time.TimerEvent | null = null
+  private toxicValve: Phaser.GameObjects.Container | null = null
+  private toxicValveHealth: number = 0
 
   // Layer suivant et masque de transparence
   private nextLayerBg!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
@@ -848,17 +853,20 @@ class GameState extends Phaser.Scene {
     const slots = this.slots
     const slotTexts = this.slotTexts
 
-    this.input.on('dragstart', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      // Initialiser la position pour le calcul de vitesse (Bio-Hazard)
-      for (const [maskId, maskObj] of maskObjects.entries()) {
-        if (maskObj.image === gameObject) {
-          if (this.infectedMaskId === maskId && this.infectionLevel > 0) {
-            this.lastDragPosition = { x: gameObject.x, y: gameObject.y }
+    this.input.on(
+      'dragstart',
+      (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+        // Initialiser la position pour le calcul de vitesse (Bio-Hazard)
+        for (const [maskId, maskObj] of maskObjects.entries()) {
+          if (maskObj.image === gameObject) {
+            if (this.infectedMaskId === maskId && this.infectionLevel > 0) {
+              this.lastDragPosition = { x: gameObject.x, y: gameObject.y }
+            }
+            break
           }
-          break
         }
       }
-    })
+    )
 
     this.input.on(
       'drag',
@@ -874,46 +882,51 @@ class GameState extends Phaser.Scene {
             // Vérifier si le masque est irradié et bloqué (Radiation)
             if (this.irradiatedMaskId === maskId && this.radiationLockedLayers > 0) {
               if (this.game.getTime() % 500 < 50) {
-                 this.cameras.main.shake(100, 0.005)
-                 emitSound('clic', { rate: 0.5 })
+                this.cameras.main.shake(100, 0.005)
+                emitSound('clic', { rate: 0.5 })
               }
               return
             }
 
             // Mécanique Bio-Hazard: Secouer pour nettoyer
             if (this.infectedMaskId === maskId && this.infectionLevel > 0) {
-               if (this.lastDragPosition) {
-                 const dist = Phaser.Math.Distance.Between(this.lastDragPosition.x, this.lastDragPosition.y, dragX, dragY)
-                 
-                 // Si mouvement rapide (secousse)
-                 if (dist > 10) { 
-                   this.infectionLevel -= 1.5 // Nettoyage progressif
-                   
-                   // Son de nettoyage (gluant/frottement)
-                   if (Math.random() > 0.7) {
-                     emitSound('malus/acid', { rate: 2.0, volume: 0.2 })
-                   }
+              if (this.lastDragPosition) {
+                const dist = Phaser.Math.Distance.Between(
+                  this.lastDragPosition.x,
+                  this.lastDragPosition.y,
+                  dragX,
+                  dragY
+                )
 
-                   // Particules de crasse (optionnel, simple tint update pour l'instant)
-                   // On pourrait interpoler la couleur ici si on veut
-                   
-                   if (this.infectionLevel <= 0) {
-                     // Nettoyé !
-                     this.infectionLevel = 0
-                     this.infectedMaskId = null
-                     maskObj.image.clearTint()
-                     emitSound('radar-ok')
-                     
-                     this.tweens.add({
-                       targets: maskObj.image,
-                       scale: 1.2,
-                       duration: 200,
-                       yoyo: true
-                     })
-                   }
-                 }
-               }
-               this.lastDragPosition = { x: dragX, y: dragY }
+                // Si mouvement rapide (secousse)
+                if (dist > 10) {
+                  this.infectionLevel -= 1.5 // Nettoyage progressif
+
+                  // Son de nettoyage (gluant/frottement)
+                  if (Math.random() > 0.7) {
+                    emitSound('malus/acid', { rate: 2.0, volume: 0.2 })
+                  }
+
+                  // Particules de crasse (optionnel, simple tint update pour l'instant)
+                  // On pourrait interpoler la couleur ici si on veut
+
+                  if (this.infectionLevel <= 0) {
+                    // Nettoyé !
+                    this.infectionLevel = 0
+                    this.infectedMaskId = null
+                    maskObj.image.clearTint()
+                    emitSound('radar-ok')
+
+                    this.tweens.add({
+                      targets: maskObj.image,
+                      scale: 1.2,
+                      duration: 200,
+                      yoyo: true,
+                    })
+                  }
+                }
+              }
+              this.lastDragPosition = { x: dragX, y: dragY }
             }
 
             maskObj.image.x = dragX
@@ -944,15 +957,15 @@ class GameState extends Phaser.Scene {
 
         // Vérifier si on lâche sur un slot du centre
         // On empêche le placement si le masque est encore contaminé
-        const isContaminated = (draggedMask.id === this.infectedMaskId && this.infectionLevel > 0)
-        
+        const isContaminated = draggedMask.id === this.infectedMaskId && this.infectionLevel > 0
+
         if (!isContaminated) {
           for (let i = 0; i < slots.length; i++) {
             const slot = slots[i]
             const maskBounds = draggedImage.getBounds()
             const slotBounds = slot.getBounds()
             const isOverlapping = Phaser.Geom.Rectangle.Overlaps(maskBounds, slotBounds)
-  
+
             if (isOverlapping) {
               // Vérifier si le slot contient déjà un masque
               const existingMaskId = this.placedMasksStore.getMaskInSlot(i)
@@ -960,7 +973,7 @@ class GameState extends Phaser.Scene {
                 // Swap : retourner l'ancien masque à l'inventaire
                 const existingMask = masks.find((m) => m.id === existingMaskId)
                 const existingMaskObj = maskObjects.get(existingMaskId)
-  
+
                 if (existingMask && existingMaskObj) {
                   const existingInventoryPos = inventorySlots.get(existingMaskId) || {
                     x: this.DRILL_X,
@@ -976,7 +989,7 @@ class GameState extends Phaser.Scene {
                   existingMask.y = existingInventoryPos.y
                 }
               }
-  
+
               // Placer le nouveau masque dans le slot
               draggedMask.isPlaced = true
               draggedMask.slotIndex = i
@@ -984,23 +997,23 @@ class GameState extends Phaser.Scene {
               draggedMask.y = slot.y
               this.placedMasksStore.setMaskInSlot(i, draggedMask.id)
               slotTexts[i].setVisible(false)
-  
+
               // Masquer l'image du masque
               draggedImage.setAlpha(0)
-  
+
               // Son de placement de masque
               emitSound('putting-mask-on')
-  
+
               // Afficher le masque sur le driller
               this.updateDrillerMask(draggedMask.dangerId)
-  
+
               placedInSlot = true
               break
             }
           }
         } else {
-           // Feedback visuel si on essaie de placer un masque sale
-           emitSound('clic', { rate: 0.5 }) 
+          // Feedback visuel si on essaie de placer un masque sale
+          emitSound('clic', { rate: 0.5 })
         }
 
         // Si pas placé sur un slot (ou contaminé), retourner à l'inventaire
@@ -1585,6 +1598,28 @@ class GameState extends Phaser.Scene {
     this.updatePostPipelines()
   }
 
+  private stopToxicSpawner() {
+    if (this.toxicSpawnerEvent) {
+      this.toxicSpawnerEvent.remove(false)
+      this.toxicSpawnerEvent = null
+    }
+
+    if (this.toxicValve) {
+      this.toxicValve.destroy()
+      this.toxicValve = null
+    }
+  }
+
+  private clearToxicMalus() {
+    this.stopToxicSpawner()
+
+    this.toxicClouds.forEach((cloudData: any) => {
+      cloudData.image.destroy()
+    })
+    this.toxicClouds = []
+
+    this.updatePostPipelines()
+  }
   private completeContract() {
     const contract = this.gameStore.contract
     if (contract) {
@@ -1667,10 +1702,10 @@ class GameState extends Phaser.Scene {
    * Malus Toxique: Crée des nuages de gaz toxique qui inversent les couleurs
    */
   private applyToxicMalus() {
-    console.log('🧪 MALUS TOXIQUE: Nuages toxiques!')
+    console.log('🧪 MALUS TOXIQUE: Fuite de gaz!')
 
     // Afficher un message visuel
-    const malusText = this.add.text(400, 200, '🧪 TOXIQUE: Nuages toxiques!', {
+    const malusText = this.add.text(400, 200, '🧪 TOXIQUE: Fuite de gaz !', {
       fontSize: '24px',
       color: '#9933ff',
       backgroundColor: '#000000',
@@ -1680,7 +1715,6 @@ class GameState extends Phaser.Scene {
     malusText.setOrigin(0.5, 0.5)
     malusText.setDepth(25)
 
-    // Faire disparaître le texte après 2 secondes
     this.tweens.add({
       targets: malusText,
       alpha: 0,
@@ -1691,79 +1725,130 @@ class GameState extends Phaser.Scene {
       },
     })
 
-    // Créer plusieurs nuages de gaz toxique avec shader d'inversion
-    // On crée plus de nuages (50) de tailles variées pour un effet de fumée dense
-    const cloudCount = 50
+    // Nettoyer l'existant
+    this.clearToxicMalus()
 
-    for (let i = 0; i < cloudCount; i++) {
-      const x = Phaser.Math.Between(0, 800)
-      const y = Phaser.Math.Between(50, 550)
-      // Taille variée : beaucoup de petits, quelques gros
-      const isBig = Math.random() > 0.7
-      const radius = isBig ? Phaser.Math.Between(80, 120) : Phaser.Math.Between(30, 60)
+    // Position de l'émetteur (Source de gaz visible sur un coté)
+    const isLeft = Math.random() > 0.5
+    const emitterX = isLeft ? 80 : 720
+    const emitterY = Phaser.Math.Between(150, 450)
 
-      // Créer une RenderTexture pour le nuage (invisible, sert de repère)
-      const rt = this.add.renderTexture(x, y, radius * 2, radius * 2)
+    // Créer la SOURCE (Un gros nuage résistant)
+    this.toxicValveHealth = 5
+    const sourceRadius = 120
+    const sourceRt = this.add.renderTexture(emitterX, emitterY, sourceRadius * 2, sourceRadius * 2)
+    const sourceGraphics = this.make.graphics({ x: 0, y: 0 })
+    sourceGraphics.fillStyle(0xffffff, 1)
+    sourceGraphics.fillCircle(sourceRadius, sourceRadius, sourceRadius)
+    sourceRt.draw(sourceGraphics)
+    sourceGraphics.destroy()
 
-      // Dessiner un cercle blanc dans la RenderTexture (nuage)
-      const graphics = this.make.graphics({ x: 0, y: 0 })
-      graphics.fillStyle(0xffffff, 1)
-      graphics.fillCircle(radius, radius, radius)
+    sourceRt.setOrigin(0.5, 0.5)
+    sourceRt.setDepth(14) // Juste sous les petits nuages
+    sourceRt.setAlpha(0.01) // Le shader l'affichera
+    sourceRt.setInteractive({ useHandCursor: true })
 
-      // Dessiner le cercle dans la RenderTexture
-      rt.draw(graphics)
-      graphics.destroy()
+    // Ajouter à la liste des nuages pour que le shader l'affiche comme un gros nuage
+    this.toxicClouds.push({
+      image: sourceRt,
+      x: emitterX,
+      y: emitterY,
+      radius: sourceRadius,
+    })
 
-      rt.setOrigin(0.5, 0.5)
-      rt.setPosition(x, y)
-      rt.setDepth(15)
-      rt.setAlpha(0.01) // Presque invisible mais interactif
-      rt.setInteractive({ useHandCursor: true })
+    this.toxicValve = sourceRt as any // On réutilise cette propriété pour stocker la source
 
-      rt.on('pointerdown', () => {
-        emitSound('short-gaz-leak')
+    sourceRt.on('pointerdown', () => {
+      this.toxicValveHealth--
+      emitSound('short-gaz-leak', { volume: 0.6, rate: 0.8 }) // Son plus lourd
 
-        // Retirer du tableau
-        const index = this.toxicClouds.findIndex((c) => c.image === rt)
-        if (index > -1) {
-          this.toxicClouds.splice(index, 1)
-        }
+      // Feedback visuel: petit tremblement
+      this.tweens.add({
+        targets: sourceRt,
+        x: emitterX + Phaser.Math.Between(-5, 5),
+        y: emitterY + Phaser.Math.Between(-5, 5),
+        duration: 50,
+        yoyo: true,
+      })
 
-        // Si plus de nuages, mettre à jour les pipelines (pour enlever Invert)
-        if (this.toxicClouds.length === 0) {
+      if (this.toxicValveHealth <= 0) {
+        emitSound('radar-ok')
+
+        // Retirer de la liste des nuages
+        const index = this.toxicClouds.findIndex((c) => c.image === sourceRt)
+        if (index > -1) this.toxicClouds.splice(index, 1)
+
+        this.stopToxicSpawner()
+        if (this.toxicClouds.length === 0) this.updatePostPipelines()
+      }
+    })
+
+    // Démarrer le générateur de nuages
+    this.toxicSpawnerEvent = this.time.addEvent({
+      delay: Phaser.Math.Between(600, 1200),
+      loop: true,
+      callback: () => {
+        // Limite de nuages pour la perf
+        if (this.toxicClouds.length >= 30) return
+        const radius = Phaser.Math.Between(60, 100)
+
+        // Créer une RenderTexture pour le nuage
+        const rt = this.add.renderTexture(emitterX, emitterY, radius * 2, radius * 2)
+        const graphics = this.make.graphics({ x: 0, y: 0 })
+        graphics.fillStyle(0xffffff, 1)
+        graphics.fillCircle(radius, radius, radius)
+        rt.draw(graphics)
+        graphics.destroy()
+
+        rt.setOrigin(0.5, 0.5)
+        rt.setDepth(15)
+        rt.setAlpha(0.01)
+        rt.setInteractive({ useHandCursor: true })
+
+        // Interaction pour dissiper
+        rt.on('pointerdown', () => {
+          emitSound('short-gaz-leak', { volume: 0.5, rate: 1.5 })
+
+          const index = this.toxicClouds.findIndex((c) => c.image === rt)
+          if (index > -1) {
+            this.toxicClouds.splice(index, 1)
+          }
+
+          if (this.toxicClouds.length === 0) {
+            this.updatePostPipelines()
+          }
+
+          rt.destroy()
+        })
+
+        // Ajouter à la liste
+        this.toxicClouds.push({
+          image: rt,
+          x: emitterX,
+          y: emitterY,
+          radius,
+        })
+
+        // Activer pipeline si premier nuage
+        if (this.toxicClouds.length === 1) {
           this.updatePostPipelines()
         }
 
-        // Détruire l'objet
-        rt.destroy()
-      })
+        emitSound('short-gaz-leak', { volume: 0.3 })
 
-      // Stocker les infos du nuage
-      this.toxicClouds.push({
-        image: rt,
-        x,
-        y,
-        radius,
-      })
-
-      // Animer le nuage pour qu'il flotte lentement
-      // Mouvements asynchrones pour un aspect organique
-      this.tweens.add({
-        targets: rt,
-        x: x + Phaser.Math.Between(-150, 150),
-        y: y + Phaser.Math.Between(-80, 80),
-        duration: Phaser.Math.Between(4000, 8000),
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-        delay: Phaser.Math.Between(0, 2000),
-      })
-    }
-
-    // Activer les pipelines maintenant que les nuages sont créés
+        // Projeter vers le centre
+        this.tweens.add({
+          targets: rt,
+          x: 400 + Phaser.Math.Between(-200, 200),
+          y: 350 + Phaser.Math.Between(-150, 150),
+          duration: Phaser.Math.Between(3000, 5000),
+          ease: 'Power1',
+        })
+      },
+    })
+    
     this.updatePostPipelines()
   }
-
   /**
    * Malus Explosion: Fait exploser l'UI et disperse les masques aléatoirement
    */
@@ -2078,12 +2163,12 @@ class GameState extends Phaser.Scene {
     })
 
     // Trouver le masque équipé
-    const equippedMask = this.masks.find(m => m.isPlaced)
-    
+    const equippedMask = this.masks.find((m) => m.isPlaced)
+
     if (equippedMask) {
       this.infectedMaskId = equippedMask.id
       this.infectionLevel = 100
-      
+
       // Ejecter le masque vers l'inventaire
       if (equippedMask.slotIndex !== undefined) {
         const slotIndex = equippedMask.slotIndex
@@ -2092,30 +2177,30 @@ class GameState extends Phaser.Scene {
         equippedMask.isPlaced = false
         equippedMask.slotIndex = undefined
       }
-      
+
       this.updateDrillerMask(null)
-      
+
       // Animer le retour à l'inventaire
       const maskObj = this.maskObjects.get(equippedMask.id)
       const inventoryPos = this.inventorySlots.get(equippedMask.id)
-      
+
       if (maskObj && inventoryPos) {
         maskObj.image.setAlpha(1)
         maskObj.image.setVisible(true)
         maskObj.image.setTint(0x88cc44) // Slime green
-        
+
         this.tweens.add({
           targets: maskObj.image,
           x: inventoryPos.x,
           y: inventoryPos.y,
           duration: 500,
-          ease: 'Back.easeOut'
+          ease: 'Back.easeOut',
         })
-        
+
         equippedMask.x = inventoryPos.x
         equippedMask.y = inventoryPos.y
       }
-      
+
       emitSound('malus/acid') // Son visqueux/acide
     }
   }
