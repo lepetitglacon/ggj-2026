@@ -44,16 +44,30 @@
         <div class="layers-section">
           <div class="layers-header">
             <h3>Couches ({{ contractsStore.selectedContract!.layers.length }} au total)</h3>
-            <p class="radar-info">
-              <span v-if="inventoryStore.radarLevel">
-                📡 Radar niveau {{ inventoryStore.radarLevel }} - {{ inventoryStore.visibleLayersCount }} couches visibles
+          </div>
+
+          <!-- Bouton Radar Payant -->
+          <div v-if="!radarActivated" class="radar-button-container">
+            <button
+              :disabled="engineStore.oil < radarCost || isLoadingRadar"
+              :class="['radar-button', { 'radar-loading': isLoadingRadar }]"
+              @click="activateRadar"
+            >
+              <span v-if="isLoadingRadar" class="loading-spinner">⟳</span>
+              <span v-else>📡</span>
+              <span class="button-text">
+                <span v-if="isLoadingRadar">Scan en cours...</span>
+                <span v-else>Voir avec le radar</span>
               </span>
-              <span v-else class="no-radar">
-                ⚠️ Pas de radar - Achetez-en un pour voir les couches
-              </span>
+              <span v-if="!isLoadingRadar" class="cost">{{ radarCost }} 🛢️</span>
+            </button>
+            <p v-if="engineStore.oil < radarCost" class="insufficient-oil">
+              ⚠️ Pétrole insuffisant ({{ engineStore.oil }} / {{ radarCost }})
             </p>
           </div>
-          <div class="layers-grid">
+
+          <!-- Grille des Couches (affichée après activation du radar) -->
+          <div v-show="radarActivated" class="layers-grid">
             <div
               v-for="(layer, index) in contractsStore.selectedContract!.layers"
               :key="layer.id"
@@ -81,6 +95,11 @@
               <span v-else-if="index >= inventoryStore.visibleLayersCount && !inventoryStore.isLayerRevealed(contractsStore.selectedContract!.id, index)" class="layer-unknown">?</span>
             </div>
           </div>
+
+          <!-- Info Radar après activation -->
+          <p v-if="radarActivated" class="radar-info active">
+            📡 Radar actif - {{ inventoryStore.visibleLayersCount }} couches visibles
+          </p>
         </div>
       </div>
 
@@ -93,11 +112,13 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useContractsStore } from '../store/contracts';
 import { useEngineStore } from '../store/engine';
 import { useGameStore } from '../store/game.store';
 import { useInventoryStore } from '../store/inventory.store';
 import { getDangerById } from '../data/dangers';
+import { emitSound, stopSound } from '../listeners/sound.listener';
 import type { DangerKey } from '../data/dangers';
 import type { Layer } from '../data/layers';
 
@@ -105,6 +126,11 @@ const contractsStore = useContractsStore();
 const engineStore = useEngineStore();
 const gameStore = useGameStore();
 const inventoryStore = useInventoryStore();
+
+// État du radar
+const radarActivated = ref(false);
+const isLoadingRadar = ref(false);
+const radarCost = 500; // Coût en pétrole pour activer le radar
 
 const getDanger = (id: DangerKey) => {
   return getDangerById(id);
@@ -163,6 +189,29 @@ const hideRevealTooltip = () => {
 
 const closePanel = () => {
   contractsStore.clearSelection();
+};
+
+const activateRadar = async () => {
+  // Vérifier les ressources
+  if (engineStore.oil < radarCost) {
+    return;
+  }
+
+  // Déduire le pétrole
+  engineStore.removeOil(radarCost);
+
+  // Lancer le chargement
+  isLoadingRadar.value = true;
+  emitSound('radar');
+
+  // Simuler le temps de scan (2 secondes)
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  // Arrêter le son radar et jouer le son de confirmation
+  stopSound('radar');
+  radarActivated.value = true;
+  isLoadingRadar.value = false;
+  emitSound('radar-ok');
 };
 
 const acceptContract = () => {
@@ -553,5 +602,107 @@ const acceptContract = () => {
   font-size: 24px;
   color: #999999;
   font-weight: bold;
+}
+
+.radar-button-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+  background: rgba(0, 150, 255, 0.15);
+  border-radius: 8px;
+  border: 2px dashed #0099ff;
+}
+
+.radar-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  font-size: 16px;
+  font-weight: bold;
+  background: linear-gradient(135deg, #0099ff, #0066cc);
+  color: white;
+  border: 2px solid #00ccff;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 15px rgba(0, 153, 255, 0.3);
+}
+
+.radar-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #00ccff, #0099ff);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 204, 255, 0.5);
+  border-color: #00ffff;
+}
+
+.radar-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.radar-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: linear-gradient(135deg, #666666, #333333);
+  border-color: #666666;
+  box-shadow: none;
+}
+
+.radar-button.radar-loading {
+  background: linear-gradient(135deg, #ff9900, #ff6600);
+  border-color: #ffaa00;
+  box-shadow: 0 4px 15px rgba(255, 153, 0, 0.3);
+}
+
+.loading-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  font-size: 20px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.button-text {
+  flex: 1;
+  text-align: center;
+}
+
+.cost {
+  font-size: 14px;
+  background: rgba(255, 255, 0, 0.2);
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #ffff00;
+  color: #ffff00;
+  white-space: nowrap;
+}
+
+.insufficient-oil {
+  color: #ff6666;
+  font-size: 12px;
+  margin: 0;
+  font-weight: bold;
+  text-align: center;
+}
+
+.radar-info.active {
+  margin-top: 10px;
+  padding: 10px;
+  background: rgba(0, 204, 255, 0.2);
+  border-radius: 6px;
+  border-left: 4px solid #00ffff;
+  color: #00ffff;
+  text-align: center;
 }
 </style>

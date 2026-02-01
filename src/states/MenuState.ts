@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
 import { useEngineStore } from '../store/engine'
+import { preloadSounds, emitSound } from '../listeners/sound.listener'
 
 export class MenuState extends Phaser.Scene {
   constructor() {
@@ -15,6 +16,7 @@ export class MenuState extends Phaser.Scene {
   preload() {
     // Load any assets needed for preloader here
     this.load.image('main-menu', 'img/menu/bg.avif')
+    preloadSounds(this)
   }
 
   create() {
@@ -45,6 +47,7 @@ export class MenuState extends Phaser.Scene {
     contractText.setPosition(contractButton.x, contractButton.y)
 
     contractButton.on('pointerdown', () => {
+      emitSound('clic')
       this.scene.start('contract')
     })
 

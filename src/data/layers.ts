@@ -1,4 +1,5 @@
 import { dangers, type DangerKey } from './dangers'
+import { getCountryImageName } from './locations'
 
 // Type pour une couche
 export interface Layer {
@@ -36,7 +37,47 @@ const getImageForDanger = (dangerId: DangerKey): string => {
 }
 
 // Génère les couches pour un contrat
-export const generateLayers = (level: RecognitionLevel, knownDangers: DangerKey[]): Layer[] => {
+export const generateLayers = (
+  level: RecognitionLevel,
+  knownDangers: DangerKey[],
+  countryName?: string
+): Layer[] => {
+  // Cas spécial pour le contrat TEST : générer une couche normale + tous les dangers
+  if (countryName === 'TEST') {
+    const layers: Layer[] = []
+    const allDangers: DangerKey[] = ['1', '2', '3', '4', '5', '6']
+
+    // Couche 0 : couche top (surface)
+    layers.push({
+      id: 0,
+      type: 'normal',
+      hardness: 3,
+      imageUrl: '/img/layers-pixelated/top/top.png',
+    })
+
+    // Couche 1 : couche normale
+    layers.push({
+      id: 1,
+      type: 'normal',
+      hardness: 3,
+      imageUrl: '/img/layers-pixelated/normal/1.png',
+    })
+
+    // Couches 2-7 : chaque danger
+    allDangers.forEach((dangerId, index) => {
+      const dangerImageUrl = getImageForDanger(dangerId)
+      layers.push({
+        id: index + 2,
+        type: 'danger',
+        dangerId: dangerId,
+        hardness: 3,
+        imageUrl: dangerImageUrl,
+      })
+    })
+
+    return layers
+  }
+
   const layerCount = getLayerCount(level)
   const layers: Layer[] = []
 
@@ -57,7 +98,13 @@ export const generateLayers = (level: RecognitionLevel, knownDangers: DangerKey[
     // Première couche (index 0) est toujours une couche top (surface)
     let imageUrl: string
     if (i === 0) {
-      imageUrl = `/img/layers-pixelated/top/top.png`
+      // Utiliser l'image du pays si disponible, sinon l'image par défaut
+      if (countryName) {
+        const imageName = getCountryImageName(countryName) || 'top'
+        imageUrl = `/img/layers/top/${imageName}.jpg`
+      } else {
+        imageUrl = `/img/layers-pixelated/top/top.png`
+      }
     } else {
       const normalImage = normalImages[Math.floor(Math.random() * normalImages.length)]
       imageUrl = `/img/layers-pixelated/normal/${normalImage}.png`

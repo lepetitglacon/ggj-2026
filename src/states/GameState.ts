@@ -9,7 +9,10 @@ import type { Mask } from '../data/masks'
 import { createMask } from '../data/masks'
 import type { LayerBreakAnimation } from './LayerBreakAnimation'
 import { CrackAnimation } from './LayerBreakAnimation'
-import ParticleEmitter = Phaser.GameObjects.Particles.ParticleEmitter // Animation par défaut
+import { preloadSounds, emitSound } from '../listeners/sound.listener'
+import { InvertPipeline } from '../utils/InvertPipeline'
+
+type ParticleEmitter = Phaser.GameObjects.Particles.ParticleEmitter // Animation par défaut
 
 class GameState extends Phaser.Scene {
   private gameStore = useGameStore()
@@ -40,7 +43,10 @@ class GameState extends Phaser.Scene {
   private slotTexts: Phaser.GameObjects.Text[] = []
   private maskObjects: Map<string, { image: Phaser.GameObjects.Image }> = new Map()
   private masks: Mask[] = []
-  private inventorySlots: Map<string, { x: number; y: number }> = new Map() // Slots d'inventaire pour chaque masque
+  private inventorySlots: Map<string, { x: number; y: number }> = new Map() // Slots d'inventaire pour chaque masque (position actuelle)
+  private inventorySlotObjects: Map<string, Phaser.GameObjects.Rectangle> = new Map() // Objets visuels des slots
+  private initialInventoryCoords: Map<string, { x: number; y: number }> = new Map() // Positions d'origine des slots
+  private draggingSlot: Phaser.GameObjects.Rectangle | null = null
 
   // Layer suivant et masque de transparence
   private nextLayerBg!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
@@ -54,6 +60,12 @@ class GameState extends Phaser.Scene {
   private dirtBackParticles!: any
   private dirtParticles2!: any
   private dirtBackParticles2!: any
+  private toxicClouds: Array<{
+    image: Phaser.GameObjects.RenderTexture
+    x: number
+    y: number
+    radius: number
+  }> = [] // Nuages de gaz toxique
 
   // État du forage
   private currentLayerIndex: number = -1
@@ -62,17 +74,35 @@ class GameState extends Phaser.Scene {
   private lives: number = 3
   private emitter?: ParticleEmitter
 
+  // Malus actifs
+  private activeMalus: Set<string> = new Set() // Set des IDs de dangers qui ont été déclenchés
+  private acidLayersRemaining: number = 0 // Nombre de couches restantes avec effet acide
+  private isTestMode: boolean = false // Mode test sans forage automatique
+  private nextLayerButton?: Phaser.GameObjects.Text // Bouton pour passer à la couche suivante en mode test
+
+  // Sons de forage
+  private drillBaseSound?: Phaser.Sound.BaseSound
+  private drillBgSound?: Phaser.Sound.BaseSound
+  private drillBg2Sound?: Phaser.Sound.BaseSound
+
   constructor() {
     super({ key: 'game' })
   }
 
   preload() {
+    // Enregistrer le pipeline d'inversion pour les nuages toxiques
+    const renderer = this.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer
+    if (!renderer.pipelines.get('Invert')) {
+      renderer.pipelines.addPostPipeline('Invert', InvertPipeline)
+    }
+
     // Précharger l'image du drill
     this.load.image('drill-pixelated', 'img/drill/drill_pixelated.png')
     this.load.image('driller-reduced', 'img/driller/driller.reduced.png')
     this.load.image('driller-reduced-hands', 'img/driller/driller.reduced.hands.png')
     this.load.image('oil-particle', 'img/particles/oil.png')
     this.load.image('dirt-particle', 'img/particles/dirt.png')
+    preloadSounds(this)
 
     // Précharger les images de masques
     // Pour chaque danger, charger mask-{label}.png et mask-driller-{label}.png
@@ -94,6 +124,47 @@ class GameState extends Phaser.Scene {
         `img/masks/driller/mask-driller-${maskType.name}.png`
       )
     })
+
+    // Charger uniquement l'image du pays du contrat actuel
+    const contract = this.gameStore.contract
+    if (contract) {
+      // Mappage des noms de pays à leurs images
+      const countryImageMap: Record<string, string> = {
+        Angola: 'angola',
+        Nigeria: 'nigeria',
+        Libye: 'top',
+        Algérie: 'top',
+        Norvège: 'norvège',
+        'Royaume-Uni': 'UK',
+        Canada: 'top',
+        Chine: 'top',
+        Brésil: 'top',
+        Mexique: 'mexique',
+        Kazakhstan: 'top',
+        Venezuela: 'top',
+        'États-Unis': 'US',
+        Qatar: 'top',
+        Russie: 'top',
+      }
+
+      // Obtenir le nom du pays et son image associée
+      const countryName = contract.title
+      const imageName = countryImageMap[countryName] || 'top'
+
+      // Charger uniquement cette image
+      if (imageName === 'nigeria') {
+        this.load.image(`layer-top-${imageName}`, `img/layers/top/${imageName}.jpeg`)
+      } else {
+        this.load.image(`layer-top-${imageName}`, `img/layers/top/${imageName}.jpg`)
+      }
+    }
+
+    // Précharger les images pixelisées pour les couches normales et dangers
+    const normalImages = ['1', '2', '3', '4']
+    this.load.image('layer-top-top', 'img/layers-pixelated/top/top.png')
+    normalImages.forEach((img) => {
+      this.load.image(`layer-normal-${img}`, `img/layers-pixelated/normal/${img}.png`)
+    })
   }
 
   init() {
@@ -101,6 +172,13 @@ class GameState extends Phaser.Scene {
     this.currentLayerIndex = 0
     this.drillingProgress = 0
     this.lives = 3
+    this.toxicClouds = []
+    this.activeMalus.clear()
+    this.acidLayersRemaining = 0
+
+    // Vérifier si c'est le contrat TEST
+    const contract = this.gameStore.contract
+    this.isTestMode = contract?.title === 'TEST'
   }
 
   create() {
@@ -163,12 +241,132 @@ class GameState extends Phaser.Scene {
       fontStyle: 'bold',
     })
     inventoryLabel.setDepth(29)
+
+    // Démarrer les sons de forage
+    this.startDrillingSounds()
+
+    // Créer le bouton de test si en mode TEST
+    if (this.isTestMode) {
+      this.createTestModeButton()
+
+      // Afficher un message indiquant qu'on est en mode test
+      const testModeText = this.add.text(
+        400,
+        100,
+        '🧪 MODE TEST - Cliquez pour passer à la couche suivante',
+        {
+          fontSize: '16px',
+          color: '#ffff00',
+          backgroundColor: '#000000',
+          padding: { x: 15, y: 8 },
+          align: 'center',
+        }
+      )
+      testModeText.setOrigin(0.5, 0.5)
+      testModeText.setDepth(50)
+    }
+  }
+
+  private startDrillingSounds() {
+    // Les 3 sons de forage jouent en boucle infinie simultanément
+
+    // Son de base (drill) - démarre immédiatement
+    this.drillBaseSound = this.sound.add('drill', { loop: true, volume: 0.3 })
+    this.drillBaseSound.play({ loop: true })
+
+    // Son d'ambiance 1 (drill-bg) - démarre après un délai aléatoire
+    const delay1 = Phaser.Math.Between(0, 3000)
+    this.time.delayedCall(delay1, () => {
+      this.drillBgSound = this.sound.add('drill-bg', { loop: true, volume: 0.2 })
+      this.drillBgSound.play({ loop: true })
+    })
+
+    // Son d'ambiance 2 (drill-bg-2) - démarre après un délai aléatoire différent
+    const delay2 = Phaser.Math.Between(1000, 5000)
+    this.time.delayedCall(delay2, () => {
+      this.drillBg2Sound = this.sound.add('drill-bg-2', { loop: true, volume: 0.2 })
+      this.drillBg2Sound.play({ loop: true })
+    })
+  }
+
+  private createTestModeButton() {
+    const contract = this.gameStore.contract
+    if (!contract) return
+
+    // Créer un bouton au centre-bas de l'écran
+    this.nextLayerButton = this.add.text(400, 550, '▶ COUCHE SUIVANTE (TEST)', {
+      fontSize: '20px',
+      color: '#ffffff',
+      backgroundColor: '#ff6600',
+      padding: { x: 20, y: 10 },
+      align: 'center',
+    })
+    this.nextLayerButton.setOrigin(0.5, 0.5)
+    this.nextLayerButton.setDepth(50)
+    this.nextLayerButton.setInteractive({ useHandCursor: true })
+
+    // Effet de survol
+    this.nextLayerButton.on('pointerover', () => {
+      this.nextLayerButton?.setBackgroundColor('#ff8833')
+    })
+
+    this.nextLayerButton.on('pointerout', () => {
+      this.nextLayerButton?.setBackgroundColor('#ff6600')
+    })
+
+    // Clic sur le bouton
+    this.nextLayerButton.on('pointerdown', () => {
+      emitSound('clic')
+      this.breakLayer()
+
+      // Mettre à jour le texte du bouton avec le numéro de couche
+      const currentIndex = this.currentLayerIndex
+      if (currentIndex < contract.layers.length) {
+        const layer = contract.layers[currentIndex]
+        const layerType = layer.type === 'danger' ? `DANGER: ${layer.dangerId}` : 'NORMALE'
+        this.nextLayerButton?.setText(
+          `▶ COUCHE SUIVANTE (${currentIndex + 1}/${contract.layers.length}) - ${layerType}`
+        )
+      }
+    })
+
+    // Initialiser le texte du bouton
+    const layer = contract.layers[this.currentLayerIndex]
+    const layerType = layer.type === 'danger' ? `DANGER: ${layer.dangerId}` : 'NORMALE'
+    this.nextLayerButton.setText(
+      `▶ COUCHE SUIVANTE (${this.currentLayerIndex + 1}/${contract.layers.length}) - ${layerType}`
+    )
   }
 
   update(_time: number, delta: number) {
+    // Mettre à jour les uniforms du shader de nuages
+    if (this.toxicClouds.length > 0) {
+      const pipeline = this.cameras.main.getPostPipeline('Invert') as InvertPipeline
+      if (pipeline) {
+        const cloudData = this.toxicClouds.map((c) => ({
+          x: c.image.x,
+          y: c.image.y,
+          radius: c.radius,
+        }))
+        pipeline.setClouds(cloudData)
+      }
+    }
+
     // Minage automatique
     if (this.currentLayer) {
-      const drillSpeed = this.inventoryStore.drillSpeed
+      let drillSpeed = this.inventoryStore.drillSpeed
+
+      // Si l'effet acide est actif, le forage est 10x plus rapide
+      if (this.acidLayersRemaining > 0) {
+        drillSpeed *= 10
+      }
+
+      // En mode test, arrêter le forage une fois la couche terminée
+      if (this.isTestMode && this.drillingProgress >= 1) {
+        // Ne rien faire, attendre que le joueur clique sur le bouton
+        return
+      }
+
       const progressIncrement = (delta / 1000 / this.currentLayer.hardness) * drillSpeed
 
       this.drillingProgress += progressIncrement
@@ -218,7 +416,9 @@ class GameState extends Phaser.Scene {
           16
         )
       }
-      if (this.drillingProgress >= 1) {
+
+      // En mode normal, passer automatiquement à la couche suivante
+      if (this.drillingProgress >= 1 && !this.isTestMode) {
         this.breakLayer()
       }
     }
@@ -371,9 +571,12 @@ class GameState extends Phaser.Scene {
       const inventorySlot = this.add.rectangle(inventoryX, inventoryY, 65, 65, 0x00ff00, 0.01)
       inventorySlot.setStrokeStyle(2, 0x00ff00)
       inventorySlot.setDepth(29)
+      inventorySlot.setName(maskId) // ID pour retrouver le slot lors du drag
 
       // Stocker la position du slot d'inventaire
       this.inventorySlots.set(maskId, { x: inventoryX, y: inventoryY })
+      this.inventorySlotObjects.set(maskId, inventorySlot)
+      this.initialInventoryCoords.set(maskId, { x: inventoryX, y: inventoryY })
 
       const mask = createMask(maskId, dangerId, danger.color)
       mask.x = inventoryX
@@ -392,6 +595,97 @@ class GameState extends Phaser.Scene {
 
     // Configurer le drag & drop pour les masques de l'inventaire
     this.setupInventoryMaskDragDrop()
+    
+    // Configurer le drag & drop pour les slots eux-mêmes (réparation post-explosion)
+    this.setupInventorySlotDragDrop()
+  }
+
+  private setupInventorySlotDragDrop() {
+    this.input.on('drag', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject, dragX: number, dragY: number) => {
+      // Vérifier si c'est un slot d'inventaire
+      if (gameObject instanceof Phaser.GameObjects.Rectangle && gameObject.name && gameObject.name.startsWith('mask-')) {
+        const maskId = gameObject.name
+        
+        // Déplacer le slot
+        gameObject.x = dragX
+        gameObject.y = dragY
+        
+        // Si un masque est présent (non placé), le déplacer avec le slot
+        const mask = this.masks.find(m => m.id === maskId)
+        if (mask && !mask.isPlaced) {
+          const maskObj = this.maskObjects.get(maskId)
+          if (maskObj) {
+            maskObj.image.x = dragX
+            maskObj.image.y = dragY
+            // Mettre à jour la position logique
+            mask.x = dragX
+            mask.y = dragY
+          }
+        }
+        
+        // Mettre à jour la position connue du slot (pour le drop des masques)
+        const currentPos = this.inventorySlots.get(maskId)
+        if (currentPos) {
+          currentPos.x = dragX
+          currentPos.y = dragY
+        }
+      }
+    })
+
+    this.input.on('dragend', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      if (gameObject instanceof Phaser.GameObjects.Rectangle && gameObject.name && gameObject.name.startsWith('mask-')) {
+        const maskId = gameObject.name
+        const initialPos = this.initialInventoryCoords.get(maskId)
+        
+        if (initialPos) {
+          // Vérifier la distance avec la position d'origine
+          const dist = Phaser.Math.Distance.Between(gameObject.x, gameObject.y, initialPos.x, initialPos.y)
+          
+          // Si on est assez proche (< 50px), on aimante à la position d'origine
+          if (dist < 50) {
+            // Animation de retour à la place
+            this.tweens.add({
+              targets: gameObject,
+              x: initialPos.x,
+              y: initialPos.y,
+              angle: 0, // Remettre droit
+              duration: 200,
+              ease: 'Back.easeOut'
+            })
+            
+            // Mettre à jour la position enregistrée
+            const currentPos = this.inventorySlots.get(maskId)
+            if (currentPos) {
+              currentPos.x = initialPos.x
+              currentPos.y = initialPos.y
+            }
+            
+            // Si le masque est avec, on le remet aussi
+            const mask = this.masks.find(m => m.id === maskId)
+            if (mask && !mask.isPlaced) {
+              const maskObj = this.maskObjects.get(maskId)
+              if (maskObj) {
+                this.tweens.add({
+                  targets: maskObj.image,
+                  x: initialPos.x,
+                  y: initialPos.y,
+                  angle: 0,
+                  duration: 200,
+                  ease: 'Back.easeOut'
+                })
+                mask.x = initialPos.x
+                mask.y = initialPos.y
+              }
+            }
+            
+            emitSound('clic') // Son de confirmation
+            
+            // Verrouiller le slot une fois remis en place
+            gameObject.disableInteractive()
+          }
+        }
+      }
+    })
   }
 
   private setupSlotDragDrop() {
@@ -400,29 +694,37 @@ class GameState extends Phaser.Scene {
     let currentDraggedMask: Mask | null = null
     let currentSlotIndex: number = -1
 
-    this.input.on('dragstart', (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      const slotIndex = this.slots.indexOf(gameObject as Phaser.GameObjects.Rectangle)
-      if (slotIndex !== -1) {
-        const maskId = this.placedMasksStore.getMaskInSlot(slotIndex)
-        if (maskId) {
-          const mask = this.masks.find((m) => m.id === maskId)
-          const maskObj = this.maskObjects.get(maskId)
-          if (mask && maskObj) {
-            currentDraggedSlot = gameObject as Phaser.GameObjects.Rectangle
-            currentDraggedMask = mask
-            currentDraggedImage = maskObj.image
-            currentSlotIndex = slotIndex
-            // Afficher l'image du masque et la rendre visible
-            currentDraggedImage.setAlpha(1)
-            currentDraggedImage.setDepth(50)
+    this.input.on(
+      'dragstart',
+      (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+        const slotIndex = this.slots.indexOf(gameObject as Phaser.GameObjects.Rectangle)
+        if (slotIndex !== -1) {
+          const maskId = this.placedMasksStore.getMaskInSlot(slotIndex)
+          if (maskId) {
+            const mask = this.masks.find((m) => m.id === maskId)
+            const maskObj = this.maskObjects.get(maskId)
+            if (mask && maskObj) {
+              currentDraggedSlot = gameObject as Phaser.GameObjects.Rectangle
+              currentDraggedMask = mask
+              currentDraggedImage = maskObj.image
+              currentSlotIndex = slotIndex
+              // Afficher l'image du masque et la rendre visible
+              currentDraggedImage.setAlpha(1)
+              currentDraggedImage.setDepth(50)
+            }
           }
         }
       }
-    })
+    )
 
     this.input.on(
       'drag',
-      (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject, dragX: number, dragY: number) => {
+      (
+        _pointer: Phaser.Input.Pointer,
+        gameObject: Phaser.GameObjects.GameObject,
+        dragX: number,
+        dragY: number
+      ) => {
         if (gameObject === currentDraggedSlot && currentDraggedImage) {
           currentDraggedImage.x = dragX
           currentDraggedImage.y = dragY
@@ -430,53 +732,58 @@ class GameState extends Phaser.Scene {
       }
     )
 
-    this.input.on('dragend', (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      if (gameObject === currentDraggedSlot && currentDraggedMask && currentDraggedImage) {
-        let placedInInventory = false
+    this.input.on(
+      'dragend',
+      (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+        if (gameObject === currentDraggedSlot && currentDraggedMask && currentDraggedImage) {
+          let placedInInventory = false
 
-        // Vérifier si on lâche sur un slot d'inventaire
-        const inventoryPos = this.inventorySlots.get(currentDraggedMask.id)
-        if (inventoryPos) {
-          const distance = Phaser.Math.Distance.Between(
-            currentDraggedImage.x,
-            currentDraggedImage.y,
-            inventoryPos.x,
-            inventoryPos.y
-          )
-          if (distance < 50) {
-            // Placer le masque dans l'inventaire
-            currentDraggedImage.x = inventoryPos.x
-            currentDraggedImage.y = inventoryPos.y
-            currentDraggedImage.setAlpha(1)
-            currentDraggedImage.setVisible(true)
-            currentDraggedMask.isPlaced = false
-            currentDraggedMask.slotIndex = undefined
-            currentDraggedMask.x = inventoryPos.x
-            currentDraggedMask.y = inventoryPos.y
-            placedInInventory = true
+          // Vérifier si on lâche sur un slot d'inventaire
+          const inventoryPos = this.inventorySlots.get(currentDraggedMask.id)
+          if (inventoryPos) {
+            const distance = Phaser.Math.Distance.Between(
+              currentDraggedImage.x,
+              currentDraggedImage.y,
+              inventoryPos.x,
+              inventoryPos.y
+            )
+            if (distance < 50) {
+              // Placer le masque dans l'inventaire
+              currentDraggedImage.x = inventoryPos.x
+              currentDraggedImage.y = inventoryPos.y
+              currentDraggedImage.setAlpha(1)
+              currentDraggedImage.setVisible(true)
+              currentDraggedMask.isPlaced = false
+              currentDraggedMask.slotIndex = undefined
+              currentDraggedMask.x = inventoryPos.x
+              currentDraggedMask.y = inventoryPos.y
+              placedInInventory = true
+            }
           }
-        }
 
-        // Si on n'a pas lâché sur l'inventaire, masquer l'image à nouveau
-        if (!placedInInventory) {
-          currentDraggedImage.setAlpha(0)
-          currentDraggedImage.setVisible(true)
-        }
+          // Si on n'a pas lâché sur l'inventaire, masquer l'image à nouveau
+          if (!placedInInventory) {
+            currentDraggedImage.setAlpha(0)
+            currentDraggedImage.setVisible(true)
+          }
 
-        // Retirer le masque du slot du centre et rendre le slot numéroté à nouveau
-        if (currentSlotIndex !== -1) {
-          this.placedMasksStore.removeMaskFromSlot(currentSlotIndex)
-          this.slotTexts[currentSlotIndex].setVisible(true)
-          // Toujours mettre à jour le driller quand on retire un masque
-          this.updateDrillerMask(null)
-        }
+          // Retirer le masque du slot du centre et rendre le slot numéroté à nouveau
+          if (currentSlotIndex !== -1) {
+            this.placedMasksStore.removeMaskFromSlot(currentSlotIndex)
+            this.slotTexts[currentSlotIndex].setVisible(true)
+            // Son de retrait de masque
+            emitSound('switch')
+            // Toujours mettre à jour le driller quand on retire un masque
+            this.updateDrillerMask(null)
+          }
 
-        currentDraggedSlot = null
-        currentDraggedImage = null
-        currentDraggedMask = null
-        currentSlotIndex = -1
+          currentDraggedSlot = null
+          currentDraggedImage = null
+          currentDraggedMask = null
+          currentSlotIndex = -1
+        }
       }
-    })
+    )
   }
 
   private setupInventoryMaskDragDrop() {
@@ -564,6 +871,9 @@ class GameState extends Phaser.Scene {
 
             // Masquer l'image du masque
             draggedImage.setAlpha(0)
+
+            // Son de placement de masque
+            emitSound('putting-mask-on')
 
             // Afficher le masque sur le driller
             this.updateDrillerMask(draggedMask.dangerId)
@@ -709,9 +1019,11 @@ class GameState extends Phaser.Scene {
     if (!layer.imageUrl) {
       return 'default' // Fallback, mais ne devrait pas arriver ici
     }
-    // Extraire l'image et le type du chemin (ex: /img/layers-pixelated/top/top.png)
+    // Extraire l'image et le type du chemin (ex: /img/layers-pixelated/top/top.png ou /img/layers/top/angola.jpg)
     const parts = layer.imageUrl.split('/')
-    const imageName = parts[parts.length - 1].replace('.png', '')
+    const filename = parts[parts.length - 1]
+    // Supprimer l'extension (.png ou .jpg)
+    const imageName = filename.replace(/\.(png|jpg|jpeg)$/, '')
     const layerType = parts[parts.length - 2]
     return `layer-${layerType}-${imageName}`
   }
@@ -876,6 +1188,9 @@ class GameState extends Phaser.Scene {
           // Pas de masque ou mauvais masque -> perte de vie
           this.takeDamage()
         }
+
+        // TOUJOURS appliquer le malus du danger, même avec le bon masque
+        this.applyDangerMalus(nextLayer.dangerId)
       }
     }
 
@@ -889,6 +1204,15 @@ class GameState extends Phaser.Scene {
     this.driller.y = this.DRILL_Y
     this.drillerText.x = this.DRILL_X
     this.drillerText.y = this.DRILL_Y
+
+    // Décrémenter le compteur d'effet acide si actif
+    if (this.acidLayersRemaining > 0) {
+      this.acidLayersRemaining--
+      if (this.acidLayersRemaining === 0) {
+        // Remettre la couleur normale du drill
+        this.driller.clearTint()
+      }
+    }
 
     this.currentLayerIndex++
 
@@ -989,15 +1313,54 @@ class GameState extends Phaser.Scene {
     this.lives--
     this.livesText.setText(`❤️ Vies: ${this.lives}`)
     this.cameras.main.shake(300, 0.01)
+    emitSound('damage-hit')
+
+    // Tint rouge sur le personnage pendant 0.5 secondes
+    const redTint = 0xff0000
+    this.drillerDude.setTint(redTint)
+    this.drillerDudeHands.setTint(redTint)
+    if (this.drillerMask) {
+      this.drillerMask.setTint(redTint)
+    }
+
+    this.time.delayedCall(500, () => {
+      this.drillerDude.clearTint()
+      this.drillerDudeHands.clearTint()
+      if (this.drillerMask) {
+        this.drillerMask.clearTint()
+      }
+    })
 
     if (this.lives <= 0) {
       this.failContract()
     }
   }
 
+  private stopDrillingSounds() {
+    this.drillBaseSound?.stop()
+    this.drillBgSound?.stop()
+    this.drillBg2Sound?.stop()
+  }
+
   private failContract() {
     // Perte de reconnaissance
     this.engineStore.removeRecognition(20)
+
+    // Arrêter les sons de forage et jouer le son d'échec
+    this.stopDrillingSounds()
+    emitSound('radiation')
+
+    // Nettoyer les nuages toxiques
+    this.toxicClouds.forEach((cloudData: any) => {
+      cloudData.image.destroy()
+    })
+    this.toxicClouds = []
+    this.cameras.main.removePostPipeline('Invert')
+
+    // Détruire le bouton de test
+    if (this.nextLayerButton) {
+      this.nextLayerButton.destroy()
+    }
 
     const failText = this.add.text(400, 300, 'Contrat échoué !\n-20 reconnaissance', {
       fontSize: '32px',
@@ -1023,6 +1386,20 @@ class GameState extends Phaser.Scene {
       // Marquer le pays comme complété
       this.engineStore.completeCountry(contract.title)
 
+      // Arrêter les sons de forage et jouer le son de succès
+      this.stopDrillingSounds()
+      emitSound('radar-ok')
+
+      // Nettoyer les nuages toxiques
+      this.toxicClouds.forEach((cloud) => cloud.image.destroy())
+      this.toxicClouds = []
+      this.cameras.main.removePostPipeline('Invert')
+
+      // Détruire le bouton de test
+      if (this.nextLayerButton) {
+        this.nextLayerButton.destroy()
+      }
+
       const successText = this.add.text(
         400,
         300,
@@ -1042,6 +1419,402 @@ class GameState extends Phaser.Scene {
         this.scene.start('contract')
       })
     }
+  }
+
+  /**
+   * Applique le malus d'un danger spécifique
+   */
+  private applyDangerMalus(dangerId: string) {
+    // Marquer ce malus comme actif
+    this.activeMalus.add(dangerId)
+
+    switch (dangerId) {
+      case '1': // Toxique - Renversement de couleur sur les prochaines couches
+        this.applyToxicMalus()
+        break
+      case '2': // Explosion - UI éclatée
+        this.applyExplosionMalus()
+        break
+      case '3': // Radiation - Masques deviennent blancs
+        this.applyRadiationMalus()
+        break
+      case '4': // Acide - Drill peut casser instantanément une couche
+        this.applyAcidMalus()
+        break
+      case '5': // Flammable - Masques calcinés (noir)
+        this.applyFlammableMalus()
+        break
+      case '6': // Bio-hazard - Masques inutilisables temporairement
+        this.applyBioHazardMalus()
+        break
+    }
+  }
+
+  /**
+   * Malus Toxique: Crée des nuages de gaz toxique qui inversent les couleurs
+   */
+  private applyToxicMalus() {
+    console.log('🧪 MALUS TOXIQUE: Nuages toxiques!')
+
+    // Afficher un message visuel
+    const malusText = this.add.text(400, 200, '🧪 TOXIQUE: Nuages toxiques!', {
+      fontSize: '24px',
+      color: '#9933ff',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 8 },
+      align: 'center',
+    })
+    malusText.setOrigin(0.5, 0.5)
+    malusText.setDepth(25)
+
+    // Faire disparaître le texte après 2 secondes
+    this.tweens.add({
+      targets: malusText,
+      alpha: 0,
+      duration: 2000,
+      delay: 1000,
+      onComplete: () => {
+        malusText.destroy()
+      },
+    })
+
+    // Activer le PostFX sur la caméra
+    this.cameras.main.setPostPipeline('Invert')
+
+    // Créer plusieurs nuages de gaz toxique avec shader d'inversion
+    // On crée plus de nuages (50) de tailles variées pour un effet de fumée dense
+    const cloudCount = 50
+
+    for (let i = 0; i < cloudCount; i++) {
+      const x = Phaser.Math.Between(0, 800)
+      const y = Phaser.Math.Between(50, 550)
+      // Taille variée : beaucoup de petits, quelques gros
+      const isBig = Math.random() > 0.7
+      const radius = isBig ? Phaser.Math.Between(80, 120) : Phaser.Math.Between(30, 60)
+
+      // Créer une RenderTexture pour le nuage (invisible, sert de repère)
+      const rt = this.add.renderTexture(x, y, radius * 2, radius * 2)
+
+      // Dessiner un cercle blanc dans la RenderTexture (nuage)
+      const graphics = this.make.graphics({ x: 0, y: 0 })
+      graphics.fillStyle(0xffffff, 1)
+      graphics.fillCircle(radius, radius, radius)
+
+      // Dessiner le cercle dans la RenderTexture
+      rt.draw(graphics)
+      graphics.destroy()
+
+      rt.setOrigin(0.5, 0.5)
+      rt.setPosition(x, y)
+      rt.setDepth(15)
+      rt.setAlpha(0.01) // Presque invisible mais interactif
+      rt.setInteractive({ useHandCursor: true })
+
+      rt.on('pointerdown', () => {
+        emitSound('short-gaz-leak', { volume: 0.5 })
+        
+        // Retirer du tableau
+        const index = this.toxicClouds.findIndex((c) => c.image === rt)
+        if (index > -1) {
+          this.toxicClouds.splice(index, 1)
+        }
+        
+        // Détruire l'objet
+        rt.destroy()
+      })
+
+      // Stocker les infos du nuage
+      this.toxicClouds.push({
+        image: rt,
+        x,
+        y,
+        radius,
+      })
+
+      // Animer le nuage pour qu'il flotte lentement
+      // Mouvements asynchrones pour un aspect organique
+      this.tweens.add({
+        targets: rt,
+        x: x + Phaser.Math.Between(-150, 150),
+        y: y + Phaser.Math.Between(-80, 80),
+        duration: Phaser.Math.Between(4000, 8000),
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+        delay: Phaser.Math.Between(0, 2000),
+      })
+
+      // Pulsation de taille (via le rayon dans le shader, simulé ici par scale qui sera ignoré par le shader actuel
+      // mais on pourrait modifier radius dynamiquement dans update si besoin. Pour l'instant on bouge juste x/y)
+    }
+  }
+
+  /**
+   * Malus Explosion: Fait exploser l'UI et disperse les masques aléatoirement
+   */
+  private applyExplosionMalus() {
+    console.log('💥 MALUS EXPLOSION: Masques dispersés!')
+
+    // Afficher un message visuel
+    const malusText = this.add.text(400, 200, '💥 EXPLOSION: Masques dispersés!', {
+      fontSize: '24px',
+      color: '#ff6600',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 8 },
+      align: 'center',
+    })
+    malusText.setOrigin(0.5, 0.5)
+    malusText.setDepth(25)
+
+    // Faire disparaître le texte après 2 secondes
+    this.tweens.add({
+      targets: malusText,
+      alpha: 0,
+      duration: 2000,
+      delay: 1000,
+      onComplete: () => {
+        malusText.destroy()
+      },
+    })
+
+    // Shake de la caméra pour l'effet d'explosion
+    this.cameras.main.shake(500, 0.02)
+
+    // Disperser les slots d'inventaire
+    this.inventorySlotObjects.forEach((slot, maskId) => {
+      // Rendre le slot interactif pour pouvoir le remettre en place
+      slot.setInteractive({ draggable: true, useHandCursor: true })
+      
+      // Position aléatoire sur l'écran (zone plus large pour l'explosion)
+      const randomX = Phaser.Math.Between(100, 700)
+      const randomY = Phaser.Math.Between(100, 500) // Plus bas pour ne pas gêner le header
+
+      // Mettre à jour la position cible du slot
+      const inventoryPos = this.inventorySlots.get(maskId)
+      if (inventoryPos) {
+        inventoryPos.x = randomX
+        inventoryPos.y = randomY
+      }
+
+      // Animer le slot
+      this.tweens.add({
+        targets: slot,
+        x: randomX,
+        y: randomY,
+        angle: Phaser.Math.Between(-45, 45), // Rotation du slot aussi
+        duration: 500,
+        ease: 'Back.easeOut',
+      })
+
+      // Si le masque associé est dans l'inventaire (pas placé), il suit le slot
+      const mask = this.masks.find(m => m.id === maskId)
+      if (mask && !mask.isPlaced) {
+        const maskObj = this.maskObjects.get(maskId)
+        if (maskObj) {
+          // Animer le masque vers sa nouvelle position (celle du slot)
+          this.tweens.add({
+            targets: maskObj.image,
+            x: randomX,
+            y: randomY,
+            angle: Phaser.Math.Between(-30, 30),
+            duration: 500,
+            ease: 'Back.easeOut',
+          })
+          
+          // Mettre à jour la position logique du masque
+          mask.x = randomX
+          mask.y = randomY
+        }
+      }
+    })
+  }
+
+  /**
+   * Malus Radiation: Irradie les masques et les rend blancs (perte de couleur)
+   */
+  private applyRadiationMalus() {
+    console.log('☢️ MALUS RADIATION: Masques irradiés!')
+
+    // Afficher un message visuel
+    const malusText = this.add.text(400, 200, '☢️ RADIATION: Masques irradiés!', {
+      fontSize: '24px',
+      color: '#00ff00',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 8 },
+      align: 'center',
+    })
+    malusText.setOrigin(0.5, 0.5)
+    malusText.setDepth(25)
+
+    // Faire disparaître le texte après 2 secondes
+    this.tweens.add({
+      targets: malusText,
+      alpha: 0,
+      duration: 2000,
+      delay: 1000,
+      onComplete: () => {
+        malusText.destroy()
+      },
+    })
+
+    // Appliquer un tint blanc à tous les masques pour les décolorer
+    this.maskObjects.forEach((maskObj) => {
+      maskObj.image.setTint(0xffffff)
+
+      // Animation de flash pour l'effet de radiation
+      this.tweens.add({
+        targets: maskObj.image,
+        alpha: 0.5,
+        duration: 200,
+        yoyo: true,
+        repeat: 2,
+      })
+    })
+  }
+
+  /**
+   * Malus Acide: Le drill devient acide et fore 10x plus vite pendant 2 couches
+   */
+  private applyAcidMalus() {
+    console.log('🧪 MALUS ACIDE: Forage ultra-rapide!')
+
+    // Afficher un message visuel
+    const malusText = this.add.text(400, 200, '🧪 ACIDE: Forage 10x plus rapide!', {
+      fontSize: '24px',
+      color: '#ccff00',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 8 },
+      align: 'center',
+    })
+    malusText.setOrigin(0.5, 0.5)
+    malusText.setDepth(25)
+
+    // Faire disparaître le texte après 2 secondes
+    this.tweens.add({
+      targets: malusText,
+      alpha: 0,
+      duration: 2000,
+      delay: 1000,
+      onComplete: () => {
+        malusText.destroy()
+      },
+    })
+
+    // Activer l'effet acide pour les 2 prochaines couches
+    this.acidLayersRemaining = 2
+
+    // Teinter le drill en jaune-vert pour montrer qu'il est acide
+    this.driller.setTint(0xccff00)
+  }
+
+  /**
+   * Malus Flammable: Brûle tous les masques et les rend calcinés (noir)
+   */
+  private applyFlammableMalus() {
+    console.log('🔥 MALUS FLAMMABLE: Masques calcinés!')
+
+    // Afficher un message visuel
+    const malusText = this.add.text(400, 200, '🔥 FLAMMABLE: Masques brûlés!', {
+      fontSize: '24px',
+      color: '#ff0000',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 8 },
+      align: 'center',
+    })
+    malusText.setOrigin(0.5, 0.5)
+    malusText.setDepth(25)
+
+    // Faire disparaître le texte après 2 secondes
+    this.tweens.add({
+      targets: malusText,
+      alpha: 0,
+      duration: 2000,
+      delay: 1000,
+      onComplete: () => {
+        malusText.destroy()
+      },
+    })
+
+    // Appliquer un tint noir à tous les masques pour les calciner
+    this.maskObjects.forEach((maskObj) => {
+      maskObj.image.setTint(0x222222) // Gris très foncé (presque noir)
+
+      // Animation de flammes avec effet de scale
+      this.tweens.add({
+        targets: maskObj.image,
+        scaleX: 1.1,
+        scaleY: 1.1,
+        duration: 150,
+        yoyo: true,
+        repeat: 3,
+      })
+    })
+  }
+
+  /**
+   * Malus Bio-hazard: Masques contaminés deviennent inutilisables temporairement
+   */
+  private applyBioHazardMalus() {
+    console.log('☣️ MALUS BIO-HAZARD: Masques contaminés!')
+
+    // Afficher un message visuel
+    const malusText = this.add.text(400, 200, '☣️ BIO-HAZARD: Masques contaminés!', {
+      fontSize: '24px',
+      color: '#00ffff',
+      backgroundColor: '#000000',
+      padding: { x: 15, y: 8 },
+      align: 'center',
+    })
+    malusText.setOrigin(0.5, 0.5)
+    malusText.setDepth(25)
+
+    // Faire disparaître le texte après 2 secondes
+    this.tweens.add({
+      targets: malusText,
+      alpha: 0,
+      duration: 2000,
+      delay: 1000,
+      onComplete: () => {
+        malusText.destroy()
+      },
+    })
+
+    // Rendre tous les masques non-draggable pendant 5 secondes
+    this.maskObjects.forEach((maskObj) => {
+      maskObj.image.disableInteractive()
+
+      // Appliquer un effet visuel de contamination (tint cyan + transparence)
+      maskObj.image.setTint(0x00ffff)
+      maskObj.image.setAlpha(0.5)
+
+      // Animation de pulsation pour montrer la contamination
+      this.tweens.add({
+        targets: maskObj.image,
+        alpha: 0.3,
+        duration: 500,
+        yoyo: true,
+        repeat: 9, // 5 secondes total (500ms * 2 * 10 / 1000)
+      })
+    })
+
+    // Rendre les slots du centre également non-draggable
+    this.slots.forEach((slot) => {
+      slot.disableInteractive()
+    })
+
+    // Réactiver les masques et slots après 5 secondes
+    this.time.delayedCall(5000, () => {
+      this.maskObjects.forEach((maskObj) => {
+        maskObj.image.setInteractive({ draggable: true, useHandCursor: true })
+        maskObj.image.setAlpha(1)
+      })
+
+      this.slots.forEach((slot) => {
+        slot.setInteractive({ draggable: true, useHandCursor: true })
+      })
+
+      console.log('☣️ Bio-hazard terminé - masques réactivés')
+    })
   }
 }
 

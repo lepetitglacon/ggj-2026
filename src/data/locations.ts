@@ -9,9 +9,35 @@ export interface Location {
   recognitionLevel: 0 | 1 | 2 | 3 // 0 = tutoriel, 1 = Afrique/Europe, 2 = autres, 3 = US/Qatar/Russie
 }
 
+// Map country names to their image filenames
+const countryImageMap: Record<string, string> = {
+  Angola: 'angola',
+  Nigeria: 'nigeria',
+  Libye: 'top', // Fallback to default top.jpg
+  Algérie: 'top',
+  Norvège: 'norvège',
+  'Royaume-Uni': 'UK',
+  Canada: 'top',
+  Chine: 'top',
+  Brésil: 'top',
+  Mexique: 'mexique',
+  Kazakhstan: 'top',
+  Venezuela: 'top',
+  'États-Unis': 'US',
+  Qatar: 'top',
+  Russie: 'top',
+  TEST: 'top', // Contract de test
+}
+
+// Get the image filename for a country (returns undefined if no custom image)
+export const getCountryImageName = (countryName: string): string | undefined => {
+  return countryImageMap[countryName]
+}
+
 export const locations: Location[] = [
   // Level 0 - Tutoriel
   { name: 'Angola', lat: -11.2, lon: 17.9, recognitionLevel: 0 },
+  { name: 'TEST', lat: -30.0, lon: 25.0, recognitionLevel: 0 },
 
   // Level 1 - Afrique + Europe
   { name: 'Nigeria', lat: 9.1, lon: 8.7, recognitionLevel: 1 },

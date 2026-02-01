@@ -6,6 +6,7 @@ import { MenuState } from './states/MenuState.ts'
 import { ContractState } from './states/ContractState.ts'
 import GameState from './states/GameState'
 import { useEngineStore } from './store/engine'
+import { initSoundListener } from './listeners/sound.listener'
 
 class Game extends Phaser.Game {
   constructor() {
@@ -32,4 +33,7 @@ window.onload = () => {
   // Connecter le store Pinia avec l'instance Phaser
   const engineStore = useEngineStore()
   engineStore.setGameInstance(game)
+
+  // Initialiser le listener de sons
+  initSoundListener(game)
 }

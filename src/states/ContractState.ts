@@ -11,6 +11,7 @@ import {
 } from '../data/dangers.ts'
 import { generateLayers } from '../data/layers'
 import { locations, projectCoordinates } from '../data/locations'
+import { preloadSounds, emitSound } from '../listeners/sound.listener'
 
 export class ContractState extends Phaser.Scene {
   private worldImage!: Phaser.GameObjects.Image
@@ -29,6 +30,7 @@ export class ContractState extends Phaser.Scene {
   preload() {
     this.load.image('world', 'img/world_pixelated.jpg')
     this.load.image('shop-icon', 'img/menu/shop.reduced.png')
+    preloadSounds(this)
 
     // Précharger les icônes des dangers
     dangers.forEach((danger) => {
@@ -93,13 +95,19 @@ export class ContractState extends Phaser.Scene {
       // Utiliser le niveau de reconnaissance du pays
       const recognitionTier = location.recognitionLevel
 
-      // Générer les dangers connus pour ce contrat
-      // Niveau 0 (tutoriel) = exactement 2 dangers, sinon 1-3 aléatoire
-      const dangerCount = recognitionTier === 0 ? 2 : Math.floor(Math.random() * 3) + 1
+      // Cas spécial pour le contrat TEST : tous les dangers
+      let knownDangers: DangerKey[]
+      if (location.name === 'TEST') {
+        knownDangers = ['1', '2', '3', '4', '5', '6']
+      } else {
+        // Générer les dangers connus pour ce contrat
+        // Niveau 0 (tutoriel) = exactement 2 dangers, sinon 1-3 aléatoire
+        const dangerCount = recognitionTier === 0 ? 2 : Math.floor(Math.random() * 3) + 1
 
-      // Obtenir les dangers disponibles pour ce niveau
-      const availableDangers = dangersByRecognitionLevel[recognitionTier]
-      const knownDangers = this.getRandomDangers([...availableDangers], dangerCount)
+        // Obtenir les dangers disponibles pour ce niveau
+        const availableDangers = dangersByRecognitionLevel[recognitionTier]
+        knownDangers = this.getRandomDangers([...availableDangers], dangerCount)
+      }
 
       const contract: Contract = {
         id: index + 1,
@@ -107,7 +115,7 @@ export class ContractState extends Phaser.Scene {
         oil: Math.floor(Math.random() * 5000) + 1000,
         minSteps: Math.floor(Math.random() * 8) + 3,
         knownDangers,
-        layers: generateLayers(recognitionTier, knownDangers),
+        layers: generateLayers(recognitionTier, knownDangers, location.name),
         x: coords.x,
         y: coords.y,
         recognitionLevel: recognitionTier,
@@ -166,6 +174,7 @@ export class ContractState extends Phaser.Scene {
 
         // Clic sur le marqueur - ouvre le menu Vue
         marker.on('pointerdown', () => {
+          emitSound('clic')
           this.contractsStore.selectContract(contract)
         })
 
@@ -296,7 +305,12 @@ export class ContractState extends Phaser.Scene {
     const storeY = greenlandCoords.y
 
     // Créer un marqueur spécial pour le magasin
-    const storeMarker = this.add.circle(storeX, storeY, 12, isTutorialCompleted ? 0xffaa00 : 0x666666)
+    const storeMarker = this.add.circle(
+      storeX,
+      storeY,
+      12,
+      isTutorialCompleted ? 0xffaa00 : 0x666666
+    )
     storeMarker.setStrokeStyle(3, isTutorialCompleted ? 0xffff00 : 0x444444)
     if (isTutorialCompleted) {
       storeMarker.setInteractive({ useHandCursor: true })
@@ -327,6 +341,7 @@ export class ContractState extends Phaser.Scene {
 
       // Clic sur le marqueur - ouvre le magasin
       const openStore = () => {
+        emitSound('clic')
         storeStore.openStore()
       }
 
