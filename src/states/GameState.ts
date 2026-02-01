@@ -9,7 +9,7 @@ import type { Mask } from '../data/masks'
 import { createMask } from '../data/masks'
 import type { LayerBreakAnimation } from './LayerBreakAnimation'
 import { CrackAnimation } from './LayerBreakAnimation'
-import { preloadSounds, emitSound } from '../listeners/sound.listener'
+import { preloadSounds, emitSound, stopSound } from '../listeners/sound.listener'
 import { InvertPipeline } from '../utils/InvertPipeline'
 import { FirePipeline } from '../utils/FirePipeline'
 import { BeamPipeline } from '../utils/BeamPipeline'
@@ -56,6 +56,8 @@ class GameState extends Phaser.Scene {
   private irradiatedMaskId: string | null = null
   private acidDrillerAura: Phaser.GameObjects.Image | null = null
   private fireLayersRemaining: number = 0
+  private fireHealth: number = 0
+  private fireHitbox: Phaser.GameObjects.Rectangle | null = null
 
   // Layer suivant et masque de transparence
   private nextLayerBg!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
@@ -359,12 +361,12 @@ class GameState extends Phaser.Scene {
     // Mettre à jour les uniforms du shader de nuages
     if (this.toxicClouds.length > 0) {
       let pipeline = this.cameras.main.getPostPipeline('Invert')
-      
+
       // Si c'est un tableau, prendre le premier
       if (Array.isArray(pipeline)) {
         pipeline = pipeline[0]
       }
-      
+
       // Vérifier que c'est bien notre pipeline custom avec la méthode setClouds
       if (pipeline && 'setClouds' in pipeline) {
         const cloudData = this.toxicClouds.map((c) => ({
@@ -1301,12 +1303,12 @@ class GameState extends Phaser.Scene {
         emitSound('radar-ok') // Son de déblocage
       }
     }
-    
+
     // Décrémenter le compteur de feu
     if (this.fireLayersRemaining > 0) {
       this.fireLayersRemaining--
       if (this.fireLayersRemaining === 0) {
-        this.updatePostPipelines()
+        this.clearFireMalus()
       }
     }
 
@@ -1451,9 +1453,9 @@ class GameState extends Phaser.Scene {
       cloudData.image.destroy()
     })
     this.toxicClouds = []
-    
+
     // Reset malus
-    this.fireLayersRemaining = 0
+    this.clearFireMalus()
     this.acidLayersRemaining = 0
     this.radiationLockedLayers = 0
     this.updatePostPipelines()
@@ -1480,22 +1482,47 @@ class GameState extends Phaser.Scene {
 
   private updatePostPipelines() {
     const pipelines: string[] = []
-    
+
     // 1. Beam (toujours avant le reste pour être inversé si besoin)
     if (this.fireLayersRemaining > 0) {
       pipelines.push('Beam')
       pipelines.push('Fire')
     }
-    
+
     // 2. Invert (en dernier pour inverser tout ce qui est rendu avant)
     if (this.toxicClouds.length > 0) {
       pipelines.push('Invert')
     }
-    
+
     this.cameras.main.resetPostPipeline()
     if (pipelines.length > 0) {
       this.cameras.main.setPostPipeline(pipelines)
     }
+  }
+
+  private updateFireIntensity(intensity: number) {
+    const firePipeline = this.cameras.main.getPostPipeline('Fire')
+    if (firePipeline && !Array.isArray(firePipeline) && 'setIntensity' in firePipeline) {
+      ;(firePipeline as FirePipeline).setIntensity(intensity)
+    }
+
+    const beamPipeline = this.cameras.main.getPostPipeline('Beam')
+    if (beamPipeline && !Array.isArray(beamPipeline) && 'setIntensity' in beamPipeline) {
+      ;(beamPipeline as BeamPipeline).setIntensity(intensity)
+    }
+  }
+
+  private clearFireMalus() {
+    this.fireLayersRemaining = 0
+    this.fireHealth = 0
+    if (this.fireHitbox) {
+      this.fireHitbox.destroy()
+      this.fireHitbox = null
+    }
+
+    stopSound('fire')
+
+    this.updatePostPipelines()
   }
 
   private completeContract() {
@@ -1514,9 +1541,9 @@ class GameState extends Phaser.Scene {
       // Nettoyer les nuages toxiques
       this.toxicClouds.forEach((cloud) => cloud.image.destroy())
       this.toxicClouds = []
-      
+
       // Reset malus
-      this.fireLayersRemaining = 0
+      this.clearFireMalus()
       this.acidLayersRemaining = 0
       this.radiationLockedLayers = 0
       this.updatePostPipelines()
@@ -1641,7 +1668,7 @@ class GameState extends Phaser.Scene {
         if (index > -1) {
           this.toxicClouds.splice(index, 1)
         }
-        
+
         // Si plus de nuages, mettre à jour les pipelines (pour enlever Invert)
         if (this.toxicClouds.length === 0) {
           this.updatePostPipelines()
@@ -1672,7 +1699,7 @@ class GameState extends Phaser.Scene {
         delay: Phaser.Math.Between(0, 2000),
       })
     }
-    
+
     // Activer les pipelines maintenant que les nuages sont créés
     this.updatePostPipelines()
   }
@@ -1886,9 +1913,9 @@ class GameState extends Phaser.Scene {
       alpha: 0.3,
       duration: 500,
       yoyo: true,
-      repeat: -1
+      repeat: -1,
     })
-    
+
     emitSound('acid')
   }
 
@@ -1923,7 +1950,28 @@ class GameState extends Phaser.Scene {
 
     // Activer le shader de feu pour 2 couches
     this.fireLayersRemaining = 2
+    this.fireHealth = 10
     this.updatePostPipelines()
+    this.updateFireIntensity(1.0)
+
+    // Créer la zone interactive pour éteindre le feu
+    if (this.fireHitbox) this.fireHitbox.destroy()
+    this.fireHitbox = this.add.rectangle(400, 300, 800, 600, 0x000000, 0.01) // Alpha > 0 pour être interactif
+    this.fireHitbox.setDepth(100)
+    this.fireHitbox.setInteractive({ useHandCursor: true })
+
+    this.fireHitbox.on('pointerdown', () => {
+      this.fireHealth--
+      emitSound('water-noises', { volume: 0.5, rate: 1.5 }) // Bruit d'eau/pshit
+
+      const intensity = this.fireHealth / 10
+      this.updateFireIntensity(intensity)
+
+      if (this.fireHealth <= 0) {
+        stopSound('fire')
+        this.clearFireMalus()
+      }
+    })
 
     // Appliquer un tint noir à tous les masques pour les calciner
     this.maskObjects.forEach((maskObj) => {

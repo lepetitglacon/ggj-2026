@@ -11,6 +11,7 @@ export class FirePipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXPipeline
         uniform sampler2D uMainSampler;
         uniform vec2 uResolution;
         uniform float uTime;
+        uniform float uIntensity;
 
         varying vec2 outTexCoord;
 
@@ -84,14 +85,21 @@ export class FirePipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXPipeline
             }
 
             // Mix
-            gl_FragColor = mix(color, vec4(fireColor, 1.0), alpha);
+            gl_FragColor = mix(color, vec4(fireColor, 1.0), alpha * uIntensity);
         }
       `
     })
   }
 
+  private intensity: number = 1.0
+
+  setIntensity(value: number) {
+    this.intensity = Phaser.Math.Clamp(value, 0, 1)
+  }
+
   onPreRender() {
     this.set2f('uResolution', this.renderer.width, this.renderer.height)
     this.set1f('uTime', this.game.loop.time / 1000)
+    this.set1f('uIntensity', this.intensity)
   }
 }

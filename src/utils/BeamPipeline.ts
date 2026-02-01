@@ -11,6 +11,7 @@ export class BeamPipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXPipeline
         uniform sampler2D uMainSampler;
         uniform vec2 uResolution;
         uniform float uTime;
+        uniform float uIntensity;
 
         varying vec2 outTexCoord;
 
@@ -61,7 +62,7 @@ export class BeamPipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXPipeline
                 
                 vec3 beamColor = mix(edgeColor, centerColor, smoothstep(0.2, 0.8, intensity));
                 
-                gl_FragColor = mix(color, vec4(beamColor, 1.0), clamp(intensity * 1.5, 0.0, 1.0));
+                gl_FragColor = mix(color, vec4(beamColor, 1.0), clamp(intensity * 1.5, 0.0, 1.0) * uIntensity);
             } else {
                 gl_FragColor = color;
             }
@@ -70,8 +71,15 @@ export class BeamPipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXPipeline
     })
   }
 
+  private intensity: number = 1.0
+
+  setIntensity(value: number) {
+    this.intensity = Phaser.Math.Clamp(value, 0, 1)
+  }
+
   onPreRender() {
     this.set2f('uResolution', this.renderer.width, this.renderer.height)
     this.set1f('uTime', this.game.loop.time / 1000)
+    this.set1f('uIntensity', this.intensity)
   }
 }
