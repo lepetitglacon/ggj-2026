@@ -37,6 +37,11 @@ export class ContractState extends Phaser.Scene {
     normalImages.forEach((img) => {
       this.load.image(`layer-normal-${img}`, `img/layers-pixelated/normal/${img}.png`)
     })
+
+    // Précharger les images du drill
+    // this.load.image('drill-pixelated', 'img/drill/drill_pixelated.png')
+    // this.load.image('driller-reduced', 'img/driller/driller.reduced.png')
+    this.load.image('oil-particle', 'img/particles/oil.png')
   }
 
   create() {

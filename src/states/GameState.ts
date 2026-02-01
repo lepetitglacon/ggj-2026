@@ -15,11 +15,18 @@ class GameState extends Phaser.Scene {
   private engineStore = useEngineStore()
   private inventoryStore = useInventoryStore()
 
+  // Positions globales
+  private readonly DRILL_X = 400
+  private readonly DRILL_Y = 450 // Relevé de 70 pixels
+  private readonly MASK_CENTER_Y = 350 // Centre du masque de cassage (baissé)
+
   // Animation strategy pour le cassage de couche
   private layerBreakAnimation: LayerBreakAnimation = new CrackAnimation(600)
 
   // Éléments du jeu
   private driller!: Phaser.GameObjects.Image
+  private drillerDude!: Phaser.GameObjects.Image
+  private drillerDudeHands!: Phaser.GameObjects.Image
   private drillerText!: Phaser.GameObjects.Text
   private currentLayerRect!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
   private layerText!: Phaser.GameObjects.Text
@@ -44,6 +51,10 @@ class GameState extends Phaser.Scene {
 
   // Particules et effets
   private oilParticles!: any
+  private dirtParticles!: any
+  private dirtBackParticles!: any
+  private dirtParticles2!: any
+  private dirtBackParticles2!: any
 
   // État du forage
   private currentLayerIndex: number = -1
@@ -59,7 +70,10 @@ class GameState extends Phaser.Scene {
   preload() {
     // Précharger l'image du drill
     this.load.image('drill-pixelated', 'img/drill/drill_pixelated.png')
+    this.load.image('driller-reduced', 'img/driller/driller.reduced.png')
+    this.load.image('driller-reduced-hands', 'img/driller/driller.reduced.hands.png')
     this.load.image('oil-particle', 'img/particles/oil.png')
+    this.load.image('dirt-particle', 'img/particles/dirt.png')
   }
 
   init() {
@@ -76,12 +90,25 @@ class GameState extends Phaser.Scene {
     this.displayLayers()
 
     // === DRILL ET PARTICULES (bas) ===
+    // Créer le driller réduit en arrière-plan
+    this.drillerDude = this.add.image(this.DRILL_X, this.DRILL_Y, 'driller-reduced')
+    this.drillerDude.setOrigin(0.5, 0.5)
+    this.drillerDude.setDepth(4)
+    this.drillerDude.setScale(0.7, 0.7)
+    this.drillerDude.setPosition(this.DRILL_X, this.DRILL_Y - 80)
+    // Créer le driller réduit en arrière-plan
+    this.drillerDudeHands = this.add.image(this.DRILL_X, this.DRILL_Y, 'driller-reduced-hands')
+    this.drillerDudeHands.setOrigin(0.5, 0.5)
+    this.drillerDudeHands.setDepth(4)
+    this.drillerDudeHands.setScale(0.7, 0.7)
+    this.drillerDudeHands.setPosition(this.DRILL_X, this.DRILL_Y - 80)
+
     // Créer le driller en bas
-    this.driller = this.add.image(400, 520, 'drill-pixelated')
+    this.driller = this.add.image(this.DRILL_X, this.DRILL_Y, 'drill-pixelated')
     this.driller.setOrigin(0.5, 0.5)
     this.driller.setDepth(5)
 
-    this.drillerText = this.add.text(400, 520, '', {
+    this.drillerText = this.add.text(this.DRILL_X, this.DRILL_Y, '', {
       fontSize: '20px',
       color: '#ffffff',
       align: 'center',
@@ -96,21 +123,6 @@ class GameState extends Phaser.Scene {
     // Créer les slots et masques (en bas)
     this.createSlotsAndMasks()
 
-    // === UI EN HAUT (inventaire et infos) ===
-    // Bouton retour
-    const backButton = this.add.rectangle(50, 30, 80, 35, 0xcc0000)
-    backButton.setInteractive({ useHandCursor: true })
-    backButton.setDepth(30)
-    const backText = this.add.text(50, 30, '← Retour', {
-      fontSize: '14px',
-      color: '#ffffff',
-    })
-    backText.setOrigin(0.5, 0.5)
-    backText.setDepth(31)
-    backButton.on('pointerdown', () => {
-      this.scene.start('contract')
-    })
-
     // Affichage des vies
     this.livesText = this.add.text(750, 30, `❤️ Vies: ${this.lives}`, {
       fontSize: '18px',
@@ -122,7 +134,7 @@ class GameState extends Phaser.Scene {
     this.livesText.setDepth(31)
 
     // Zone d'inventaire (fond noir - tout en haut)
-    const inventoryBg = this.add.rectangle(400, 40, 800, 80, 0x000000, 0.9)
+    const inventoryBg = this.add.rectangle(this.DRILL_X, 40, 800, 80, 0x000000, 0.5)
     inventoryBg.setDepth(28)
 
     const inventoryLabel = this.add.text(20, 10, 'INVENTAIRE', {
@@ -151,22 +163,43 @@ class GameState extends Phaser.Scene {
         this.lastNoiseStep = currentStep
       }
 
-      this?.oilParticles?.emitParticleAt?.(
-        // this.driller.x + this.driller.width / 2,
-        // this.driller.y + this.driller.height,
+      this?.dirtParticles?.emitParticleAt?.(
         this.driller.x,
         this.driller.y + this.driller.height / 2,
-        8
+        4
       )
 
+      this?.dirtBackParticles?.emitParticleAt?.(
+        this.driller.x,
+        this.driller.y + this.driller.height / 2,
+        4
+      )
+
+      // Particules supplémentaires si vitesse augmentée
+      if (drillSpeed > 1) {
+        const extraParticles = Math.floor((drillSpeed - 1) * 4)
+        this?.dirtParticles2?.emitParticleAt?.(
+          this.driller.x,
+          this.driller.y + this.driller.height / 2,
+          extraParticles
+        )
+        this?.dirtBackParticles2?.emitParticleAt?.(
+          this.driller.x,
+          this.driller.y + this.driller.height / 2,
+          extraParticles
+        )
+      }
+
       // Si la couche est cassée, passer à la suivante
-      if (this.drillingProgress >= 1) {
-        this.breakLayer()
+      if (this.drillingProgress >= 0.9) {
         this?.oilParticles?.emitParticleAt?.(
-          this.driller.x + this.driller.width / 2,
-          this.driller.y + this.driller.height,
+          this.driller.x,
+          this.driller.y + this.driller.height / 2,
           16
         )
+      }
+      if (this.drillingProgress >= 1) {
+        this.breakLayer()
       }
     }
   }
@@ -184,24 +217,24 @@ class GameState extends Phaser.Scene {
     this.noiseGraphics.clear()
 
     // Centre de l'écran (là où est le drill)
-    const centerX = 400
-    const centerY = 300
+    const centerX = this.DRILL_X
+    const centerY = this.MASK_CENTER_Y + 150
 
     // Créer des couloirs de minage avec des traits
     const numTunnels = 2 + step
-    const traitWidth = 8 + step * 1.5
+    const traitWidth = 12 + step * 2 // Plus large
 
     for (let t = 0; t < numTunnels; t++) {
       const seed = step * 10000 + t * 1000
 
-      // Direction de chaque couloir (plus aléatoire que radial)
-      const baseAngle = (t / numTunnels) * Math.PI * 2
+      // Direction de chaque couloir - limité vers le bas (0 à π seulement)
+      const baseAngle = (t / numTunnels) * Math.PI // 0 à π au lieu de 0 à 2π
       const angleVariation = (this.seededRandom(seed) - 0.5) * Math.PI * 0.4
       const angle = baseAngle + angleVariation
 
-      // Nombre de segments dans ce couloir
-      const numSegments = 8 + step * 2
-      const maxDepth = 60 + step * 40
+      // Nombre de segments dans ce couloir - augmenté pour plus de continuité
+      const numSegments = 16 + step * 4
+      const maxDepth = 40 + step * 25
 
       for (let seg = 0; seg < numSegments; seg++) {
         const segSeed = seed + seg * 100
@@ -230,14 +263,29 @@ class GameState extends Phaser.Scene {
         const finalWidth = width * perspectiveFactor
         const finalScale = parallaxScale * perspectiveFactor
 
-        // Tracer un cercle pour former le trait (plus efficace que strokeRect)
+        // Tracer des ellipses écrasées pour une ligne plus épaisse et continue
         this.noiseGraphics.fillStyle(0xffffff, finalScale)
-        this.noiseGraphics.fillCircle(x, y, (finalWidth / 2) * finalScale)
+        const radiusX = (finalWidth / 2) * finalScale
+        const radiusY = (finalWidth / 4) * finalScale // Écrasé verticalement
+        this.noiseGraphics.fillEllipse(x, y, radiusX * 2, radiusY * 2)
+
+        // Ajouter des ellipses décalées pour plus d'épaisseur
+        const offsetDist = (finalWidth / 3) * finalScale
+        for (let offset = 0; offset < 2; offset++) {
+          const offsetAngle = angle + Math.PI / 2 + (offset === 0 ? 0 : Math.PI)
+          const offsetX = x + Math.cos(offsetAngle) * offsetDist * 0.7
+          const offsetY = y + Math.sin(offsetAngle) * offsetDist * 0.7
+          const offsetRadiusX = (finalWidth / 2.5) * finalScale
+          const offsetRadiusY = (finalWidth / 5) * finalScale
+          this.noiseGraphics.fillEllipse(offsetX, offsetY, offsetRadiusX * 2, offsetRadiusY * 2)
+        }
 
         // Halo semi-transparent avec effet de profondeur
         const haloWidth = finalWidth * 1.3
+        const haloRadiusX = (haloWidth / 2) * finalScale
+        const haloRadiusY = (haloWidth / 4) * finalScale
         this.noiseGraphics.fillStyle(0xffffff, 0.4 * finalScale)
-        this.noiseGraphics.fillCircle(x, y, (haloWidth / 2) * finalScale)
+        this.noiseGraphics.fillEllipse(x, y, haloRadiusX * 2, haloRadiusY * 2)
       }
     }
 
@@ -252,7 +300,7 @@ class GameState extends Phaser.Scene {
     const slotCount = this.inventoryStore.maskSlots
     const slotSize = 60
     const slotSpacing = 80
-    const startX = 400 - ((slotCount - 1) * slotSpacing) / 2
+    const startX = this.DRILL_X - ((slotCount - 1) * slotSpacing) / 2
     const slotY = 150 // Au-dessus du drill
 
     // Créer les slots en bas
@@ -339,7 +387,7 @@ class GameState extends Phaser.Scene {
       if (slot) {
         return { x: slot.x, y: slot.y }
       }
-      return { x: 400, y: 560 }
+      return { x: this.DRILL_X, y: this.DRILL_Y + 110 }
     }
 
     this.input.on(
@@ -383,8 +431,8 @@ class GameState extends Phaser.Scene {
 
                 if (existingMask && existingMaskObj) {
                   const existingInventoryPos = this.inventorySlots.get(existingMaskId) || {
-                    x: 400,
-                    y: 560,
+                    x: this.DRILL_X,
+                    y: this.DRILL_Y + 110,
                   }
                   existingMaskObj.rect.x = existingInventoryPos.x
                   existingMaskObj.rect.y = existingInventoryPos.y
@@ -556,10 +604,75 @@ class GameState extends Phaser.Scene {
         quantity: 6,
         frequency: -1, // émission manuelle
         blendMode: Phaser.BlendModes.NORMAL,
+        tint: 0xffffff,
       }
     )
     this.oilParticles.setDepth(10)
     this.oilParticles.emitParticleAt(200, 200)
+    // Créer un système de particules pour la terre
+    this.dirtParticles = this.add.particles(0, 0, 'dirt-particle', {
+      x: 0,
+      y: 0,
+      lifespan: { min: 300, max: 800 },
+      speed: { min: 50, max: 200 },
+      angle: { min: -20, max: -160 },
+      scale: { start: 1, end: 0 },
+      alpha: { start: 0.3, end: 0.1 },
+      quantity: 6,
+      frequency: -1, // émission manuelle
+      blendMode: Phaser.BlendModes.NORMAL,
+      // tint: [0x8b4513, 0xa0522d, 0x654321], // Variation de teintes de brun
+    })
+    this.dirtParticles.setDepth(9)
+    this.dirtParticles.emitParticleAt(200, 200)
+    this.dirtBackParticles = this.add.particles(0, 0, 'dirt-particle', {
+      x: 0,
+      y: 0,
+      lifespan: { min: 300, max: 800 },
+      speed: { min: 50, max: 200 },
+      angle: { min: -20, max: -160 },
+      scale: { start: 1, end: 0 },
+      alpha: { start: 0.3, end: 0.1 },
+      quantity: 6,
+      frequency: -1, // émission manuelle
+      blendMode: Phaser.BlendModes.NORMAL,
+      // tint: [0x8b4513, 0xa0522d, 0x654321], // Variation de teintes de brun
+    })
+    this.dirtBackParticles.setDepth(3)
+    this.dirtBackParticles.emitParticleAt(200, 200)
+
+    // Particules supplémentaires pour augmentation de vitesse
+    this.dirtParticles2 = this.add.particles(0, 0, 'dirt-particle', {
+      x: 0,
+      y: 0,
+      lifespan: { min: 300, max: 800 },
+      speed: { min: 50, max: 200 },
+      angle: { min: -20, max: -160 },
+      scale: { start: 1, end: 0 },
+      alpha: { start: 0.3, end: 0.1 },
+      quantity: 6,
+      frequency: -1, // émission manuelle
+      blendMode: Phaser.BlendModes.ADD,
+      tint: [0x8b4513, 0xa0522d, 0x654321], // Variation de teintes de brun
+    })
+    this.dirtParticles2.setDepth(9)
+    this.dirtParticles2.emitParticleAt(200, 200)
+
+    this.dirtBackParticles2 = this.add.particles(0, 0, 'dirt-particle', {
+      x: 0,
+      y: 0,
+      lifespan: { min: 300, max: 800 },
+      speed: { min: 50, max: 200 },
+      angle: { min: -20, max: -160 },
+      scale: { start: 1, end: 0 },
+      alpha: { start: 0.3, end: 0.1 },
+      quantity: 6,
+      frequency: -1, // émission manuelle
+      blendMode: Phaser.BlendModes.ADD,
+      tint: [0x8b4513, 0xa0522d, 0x654321], // Variation de teintes de brun
+    })
+    this.dirtBackParticles2.setDepth(3)
+    this.dirtBackParticles2.emitParticleAt(200, 200)
   }
 
   private getLayerLabel(layer: Layer): string {
@@ -580,10 +693,23 @@ class GameState extends Phaser.Scene {
 
   private shakeEffect() {
     const shakeAmount = 6
-    this.driller.x = 400 + Phaser.Math.Between(-shakeAmount, shakeAmount)
-    this.driller.y = 520 + Phaser.Math.Between(-shakeAmount, shakeAmount)
+    const bodyShakeAmount = 2 // Le corps tremble moins
+    const handsShakeAmount = 4 // Les mains tremblent un peu plus
+
+    this.driller.x = this.DRILL_X + Phaser.Math.Between(-shakeAmount, shakeAmount)
+    this.driller.y = this.DRILL_Y + Phaser.Math.Between(-shakeAmount, shakeAmount)
     this.drillerText.x = this.driller.x
     this.drillerText.y = this.driller.y
+
+    // Trembler le corps du driller
+    this.drillerDude.x = this.DRILL_X + Phaser.Math.Between(-bodyShakeAmount, bodyShakeAmount)
+    this.drillerDude.y = this.DRILL_Y - 80 + Phaser.Math.Between(-bodyShakeAmount, bodyShakeAmount)
+
+    // Trembler les mains du driller plus
+    this.drillerDudeHands.x =
+      this.DRILL_X + Phaser.Math.Between(-handsShakeAmount, handsShakeAmount)
+    this.drillerDudeHands.y =
+      this.DRILL_Y - 80 + Phaser.Math.Between(-handsShakeAmount, handsShakeAmount)
   }
 
   /**
@@ -622,10 +748,10 @@ class GameState extends Phaser.Scene {
     // Passer à la couche suivante
     this.drillingProgress = 0
     this.lastNoiseStep = 0
-    this.driller.x = 400
-    this.driller.y = 520
-    this.drillerText.x = 400
-    this.drillerText.y = 520
+    this.driller.x = this.DRILL_X
+    this.driller.y = this.DRILL_Y
+    this.drillerText.x = this.DRILL_X
+    this.drillerText.y = this.DRILL_Y
 
     this.currentLayerIndex++
 
@@ -659,7 +785,10 @@ class GameState extends Phaser.Scene {
 
         if (maskObj && slot && this.slotTexts[slotIndex]) {
           // Retourner le masque à son inventaire
-          const inventoryPos = this.inventorySlots.get(mask.id) || { x: 400, y: 560 }
+          const inventoryPos = this.inventorySlots.get(mask.id) || {
+            x: this.DRILL_X,
+            y: this.DRILL_Y + 110,
+          }
           maskObj.rect.x = inventoryPos.x
           maskObj.rect.y = inventoryPos.y
           maskObj.text.x = inventoryPos.x
@@ -676,7 +805,10 @@ class GameState extends Phaser.Scene {
         // Réinitialiser l'état du masque
         mask.isPlaced = false
         mask.slotIndex = undefined
-        const inventoryPos = this.inventorySlots.get(mask.id) || { x: 400, y: 560 }
+        const inventoryPos = this.inventorySlots.get(mask.id) || {
+          x: this.DRILL_X,
+          y: this.DRILL_Y + 110,
+        }
         mask.x = inventoryPos.x
         mask.y = inventoryPos.y
       }
