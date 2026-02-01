@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { useEngineStore } from '../store/engine'
-import { preloadSounds, emitSound } from '../listeners/sound.listener'
+import { preloadSounds, emitSound, getMuted, toggleMute } from '../listeners/sound.listener'
 
 export class MenuState extends Phaser.Scene {
   constructor() {
@@ -57,6 +57,33 @@ export class MenuState extends Phaser.Scene {
 
     contractButton.on('pointerout', () => {
       contractButton.setFillStyle(0x0066cc)
+    })
+
+    // Bouton son (mute/unmute)
+    const soundButton = this.add.rectangle(750, 50, 60, 40, getMuted() ? 0xcc0000 : 0x00cc00)
+    soundButton.setInteractive({ useHandCursor: true })
+
+    const soundText = this.add.text(750, 50, getMuted() ? 'Son OFF' : 'Son ON', {
+      fontSize: '14px',
+      color: '#ffffff',
+    })
+    soundText.setOrigin(0.5, 0.5)
+
+    soundButton.on('pointerdown', () => {
+      const muted = toggleMute()
+      soundButton.setFillStyle(muted ? 0xcc0000 : 0x00cc00)
+      soundText.setText(muted ? 'Son OFF' : 'Son ON')
+      if (!muted) {
+        emitSound('clic')
+      }
+    })
+
+    soundButton.on('pointerover', () => {
+      soundButton.setAlpha(0.8)
+    })
+
+    soundButton.on('pointerout', () => {
+      soundButton.setAlpha(1)
     })
   }
 }

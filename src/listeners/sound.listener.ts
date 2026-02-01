@@ -58,6 +58,36 @@ export type SoundKey = keyof typeof SOUNDS
 
 let gameInstance: Phaser.Game | null = null
 let soundsLoaded = false
+let isMuted = false
+
+// Récupérer l'état mute depuis localStorage
+const savedMute = localStorage.getItem('soundMuted')
+if (savedMute !== null) {
+  isMuted = savedMute === 'true'
+}
+
+// Getter/Setter pour le mute
+export function getMuted(): boolean {
+  return isMuted
+}
+
+export function setMuted(muted: boolean): void {
+  isMuted = muted
+  localStorage.setItem('soundMuted', String(muted))
+
+  // Arrêter tous les sons si on mute
+  if (muted && gameInstance) {
+    const activeScene = gameInstance.scene.getScenes(true)[0]
+    if (activeScene) {
+      activeScene.sound.stopAll()
+    }
+  }
+}
+
+export function toggleMute(): boolean {
+  setMuted(!isMuted)
+  return isMuted
+}
 
 // Initialiser le listener avec l'instance du jeu Phaser
 export function initSoundListener(game: Phaser.Game) {
@@ -87,6 +117,10 @@ export function preloadSounds(scene: Phaser.Scene) {
 
 // Jouer un son
 export function playSound(key: SoundKey, options?: Phaser.Types.Sound.SoundConfig) {
+  if (isMuted) {
+    return
+  }
+
   if (!gameInstance) {
     console.warn('Sound listener not initialized. Call initSoundListener first.')
     return

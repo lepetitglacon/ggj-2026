@@ -13,9 +13,9 @@ export interface Layer {
 // Configuration des niveaux de reconnaissance
 export const recognitionLevels = {
   0: { min: 5, max: 5 }, // Tutoriel
-  1: { min: 5, max: 20 },
-  2: { min: 20, max: 50 },
-  3: { min: 50, max: 100 },
+  1: { min: 5, max: 5 },
+  2: { min: 10, max: 10 },
+  3: { min: 20, max: 20 },
 } as const
 
 export type RecognitionLevel = keyof typeof recognitionLevels
