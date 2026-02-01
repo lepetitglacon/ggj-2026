@@ -49,6 +49,7 @@ class GameState extends Phaser.Scene {
   private inventorySlotObjects: Map<string, Phaser.GameObjects.Rectangle> = new Map() // Objets visuels des slots
   private initialInventoryCoords: Map<string, { x: number; y: number }> = new Map() // Positions d'origine des slots
   private draggingSlot: Phaser.GameObjects.Rectangle | null = null
+  private activeMaskDangerId: string | null = null // ID du danger du masque actuellement porté
 
   // États des malus
   private acidLayersRemaining: number = 0
@@ -834,7 +835,7 @@ class GameState extends Phaser.Scene {
             // Son de retrait de masque
             emitSound('switch')
             // Toujours mettre à jour le driller quand on retire un masque
-            this.updateDrillerMask(null)
+            this.updateDrillerMask(null, true)
           }
 
           currentDraggedSlot = null
@@ -1050,7 +1051,7 @@ class GameState extends Phaser.Scene {
           if (draggedMask.isPlaced && draggedMask.slotIndex !== undefined) {
             this.placedMasksStore.removeMaskFromSlot(draggedMask.slotIndex)
             slotTexts[draggedMask.slotIndex].setVisible(true)
-            this.updateDrillerMask(null)
+            this.updateDrillerMask(null, true)
           }
 
           const inventoryPos = inventorySlots.get(draggedMask.id) || {
@@ -1070,23 +1071,28 @@ class GameState extends Phaser.Scene {
     )
   }
 
-  private updateDrillerMask(dangerId: string | null = null) {
+  private updateDrillerMask(dangerId: string | null = null, forceRemove: boolean = false) {
     // Détruire le masque précédent s'il existe
     if (this.drillerMask) {
       this.drillerMask.destroy()
       this.drillerMask = null
     }
 
-    // Trouver le premier masque placé si dangerId n'est pas fourni
-    let activeDangerId = dangerId
-    if (!activeDangerId) {
-      const firstPlacedMask = this.masks.find((m) => m.isPlaced)
-      if (firstPlacedMask) {
-        activeDangerId = firstPlacedMask.dangerId
-      }
+    // Si forceRemove, on retire le masque du driller
+    if (forceRemove) {
+      this.activeMaskDangerId = null
+      return
     }
 
-    // Si un masque est placé, afficher l'image du masque sur le driller
+    // Mettre à jour l'ID du masque actif si un dangerId est fourni
+    if (dangerId !== null) {
+      this.activeMaskDangerId = dangerId
+    }
+
+    // Utiliser l'ID stocké
+    const activeDangerId = this.activeMaskDangerId
+
+    // Si un masque est actif, afficher l'image du masque sur le driller
     if (activeDangerId) {
       this.drillerMask = this.add.image(
         this.DRILL_X,
@@ -1463,7 +1469,7 @@ class GameState extends Phaser.Scene {
     })
 
     // Retirer le masque du driller
-    this.updateDrillerMask(null)
+    this.updateDrillerMask(null, true)
   }
 
   private gainOilForLayer(layerIndex: number) {
@@ -2002,7 +2008,7 @@ class GameState extends Phaser.Scene {
         equippedMask.slotIndex = undefined
       }
 
-      this.updateDrillerMask(null)
+      this.updateDrillerMask(null, true)
 
       // Animer le retour à l'inventaire
       const maskObj = this.maskObjects.get(equippedMask.id)
@@ -2206,7 +2212,7 @@ class GameState extends Phaser.Scene {
         equippedMask.slotIndex = undefined
       }
 
-      this.updateDrillerMask(null)
+      this.updateDrillerMask(null, true)
 
       // Animer le retour à l'inventaire
       const maskObj = this.maskObjects.get(equippedMask.id)
