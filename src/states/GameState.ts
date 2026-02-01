@@ -12,6 +12,7 @@ import { CrackAnimation } from './LayerBreakAnimation'
 import { preloadSounds, emitSound } from '../listeners/sound.listener'
 import { InvertPipeline } from '../utils/InvertPipeline'
 import { FirePipeline } from '../utils/FirePipeline'
+import { BeamPipeline } from '../utils/BeamPipeline'
 
 type ParticleEmitter = Phaser.GameObjects.Particles.ParticleEmitter // Animation par défaut
 
@@ -105,6 +106,9 @@ class GameState extends Phaser.Scene {
     }
     if (!renderer.pipelines.get('Fire')) {
       renderer.pipelines.addPostPipeline('Fire', FirePipeline)
+    }
+    if (!renderer.pipelines.get('Beam')) {
+      renderer.pipelines.addPostPipeline('Beam', BeamPipeline)
     }
 
     // Précharger l'image du drill
@@ -354,14 +358,21 @@ class GameState extends Phaser.Scene {
   update(_time: number, delta: number) {
     // Mettre à jour les uniforms du shader de nuages
     if (this.toxicClouds.length > 0) {
-      const pipeline = this.cameras.main.getPostPipeline('Invert') as InvertPipeline
-      if (pipeline) {
+      let pipeline = this.cameras.main.getPostPipeline('Invert')
+      
+      // Si c'est un tableau, prendre le premier
+      if (Array.isArray(pipeline)) {
+        pipeline = pipeline[0]
+      }
+      
+      // Vérifier que c'est bien notre pipeline custom avec la méthode setClouds
+      if (pipeline && 'setClouds' in pipeline) {
         const cloudData = this.toxicClouds.map((c) => ({
           x: c.image.x,
           y: c.image.y,
           radius: c.radius,
         }))
-        pipeline.setClouds(cloudData)
+        ;(pipeline as InvertPipeline).setClouds(cloudData)
       }
     }
 
@@ -1295,7 +1306,7 @@ class GameState extends Phaser.Scene {
     if (this.fireLayersRemaining > 0) {
       this.fireLayersRemaining--
       if (this.fireLayersRemaining === 0) {
-        this.cameras.main.removePostPipeline('Fire')
+        this.updatePostPipelines()
       }
     }
 
@@ -1440,7 +1451,12 @@ class GameState extends Phaser.Scene {
       cloudData.image.destroy()
     })
     this.toxicClouds = []
-    this.cameras.main.removePostPipeline('Invert')
+    
+    // Reset malus
+    this.fireLayersRemaining = 0
+    this.acidLayersRemaining = 0
+    this.radiationLockedLayers = 0
+    this.updatePostPipelines()
 
     // Détruire le bouton de test
     if (this.nextLayerButton) {
@@ -1462,6 +1478,26 @@ class GameState extends Phaser.Scene {
     })
   }
 
+  private updatePostPipelines() {
+    const pipelines: string[] = []
+    
+    // 1. Beam (toujours avant le reste pour être inversé si besoin)
+    if (this.fireLayersRemaining > 0) {
+      pipelines.push('Beam')
+      pipelines.push('Fire')
+    }
+    
+    // 2. Invert (en dernier pour inverser tout ce qui est rendu avant)
+    if (this.toxicClouds.length > 0) {
+      pipelines.push('Invert')
+    }
+    
+    this.cameras.main.resetPostPipeline()
+    if (pipelines.length > 0) {
+      this.cameras.main.setPostPipeline(pipelines)
+    }
+  }
+
   private completeContract() {
     const contract = this.gameStore.contract
     if (contract) {
@@ -1478,7 +1514,12 @@ class GameState extends Phaser.Scene {
       // Nettoyer les nuages toxiques
       this.toxicClouds.forEach((cloud) => cloud.image.destroy())
       this.toxicClouds = []
-      this.cameras.main.removePostPipeline('Invert')
+      
+      // Reset malus
+      this.fireLayersRemaining = 0
+      this.acidLayersRemaining = 0
+      this.radiationLockedLayers = 0
+      this.updatePostPipelines()
 
       // Détruire le bouton de test
       if (this.nextLayerButton) {
@@ -1563,9 +1604,6 @@ class GameState extends Phaser.Scene {
       },
     })
 
-    // Activer le PostFX sur la caméra
-    this.cameras.main.setPostPipeline('Invert')
-
     // Créer plusieurs nuages de gaz toxique avec shader d'inversion
     // On crée plus de nuages (50) de tailles variées pour un effet de fumée dense
     const cloudCount = 50
@@ -1596,12 +1634,17 @@ class GameState extends Phaser.Scene {
       rt.setInteractive({ useHandCursor: true })
 
       rt.on('pointerdown', () => {
-        emitSound('short-gaz-leak', { volume: 0.5 })
+        emitSound('short-gaz-leak')
 
         // Retirer du tableau
         const index = this.toxicClouds.findIndex((c) => c.image === rt)
         if (index > -1) {
           this.toxicClouds.splice(index, 1)
+        }
+        
+        // Si plus de nuages, mettre à jour les pipelines (pour enlever Invert)
+        if (this.toxicClouds.length === 0) {
+          this.updatePostPipelines()
         }
 
         // Détruire l'objet
@@ -1628,10 +1671,10 @@ class GameState extends Phaser.Scene {
         ease: 'Sine.easeInOut',
         delay: Phaser.Math.Between(0, 2000),
       })
-
-      // Pulsation de taille (via le rayon dans le shader, simulé ici par scale qui sera ignoré par le shader actuel
-      // mais on pourrait modifier radius dynamiquement dans update si besoin. Pour l'instant on bouge juste x/y)
     }
+    
+    // Activer les pipelines maintenant que les nuages sont créés
+    this.updatePostPipelines()
   }
 
   /**
@@ -1879,8 +1922,8 @@ class GameState extends Phaser.Scene {
     })
 
     // Activer le shader de feu pour 2 couches
-    this.cameras.main.setPostPipeline('Fire')
     this.fireLayersRemaining = 2
+    this.updatePostPipelines()
 
     // Appliquer un tint noir à tous les masques pour les calciner
     this.maskObjects.forEach((maskObj) => {
