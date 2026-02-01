@@ -58,6 +58,11 @@ class GameState extends Phaser.Scene {
   private fireLayersRemaining: number = 0
   private fireHealth: number = 0
   private fireHitbox: Phaser.GameObjects.Rectangle | null = null
+  
+  // Bio-Hazard state
+  private infectedMaskId: string | null = null
+  private infectionLevel: number = 0
+  private lastDragPosition: { x: number; y: number } | null = null
 
   // Layer suivant et masque de transparence
   private nextLayerBg!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
@@ -843,6 +848,18 @@ class GameState extends Phaser.Scene {
     const slots = this.slots
     const slotTexts = this.slotTexts
 
+    this.input.on('dragstart', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      // Initialiser la position pour le calcul de vitesse (Bio-Hazard)
+      for (const [maskId, maskObj] of maskObjects.entries()) {
+        if (maskObj.image === gameObject) {
+          if (this.infectedMaskId === maskId && this.infectionLevel > 0) {
+            this.lastDragPosition = { x: gameObject.x, y: gameObject.y }
+          }
+          break
+        }
+      }
+    })
+
     this.input.on(
       'drag',
       (
@@ -854,14 +871,49 @@ class GameState extends Phaser.Scene {
         // Chercher si c'est un masque de l'inventaire
         for (const [maskId, maskObj] of maskObjects.entries()) {
           if (maskObj.image === gameObject) {
-            // Vérifier si le masque est irradié et bloqué
+            // Vérifier si le masque est irradié et bloqué (Radiation)
             if (this.irradiatedMaskId === maskId && this.radiationLockedLayers > 0) {
-              // Feedback visuel (limité pour ne pas spammer)
               if (this.game.getTime() % 500 < 50) {
-                this.cameras.main.shake(100, 0.005)
-                emitSound('clic', { rate: 0.5 })
+                 this.cameras.main.shake(100, 0.005)
+                 emitSound('clic', { rate: 0.5 })
               }
               return
+            }
+
+            // Mécanique Bio-Hazard: Secouer pour nettoyer
+            if (this.infectedMaskId === maskId && this.infectionLevel > 0) {
+               if (this.lastDragPosition) {
+                 const dist = Phaser.Math.Distance.Between(this.lastDragPosition.x, this.lastDragPosition.y, dragX, dragY)
+                 
+                 // Si mouvement rapide (secousse)
+                 if (dist > 10) { 
+                   this.infectionLevel -= 1.5 // Nettoyage progressif
+                   
+                   // Son de nettoyage (gluant/frottement)
+                   if (Math.random() > 0.7) {
+                     emitSound('malus/acid', { rate: 2.0, volume: 0.2 })
+                   }
+
+                   // Particules de crasse (optionnel, simple tint update pour l'instant)
+                   // On pourrait interpoler la couleur ici si on veut
+                   
+                   if (this.infectionLevel <= 0) {
+                     // Nettoyé !
+                     this.infectionLevel = 0
+                     this.infectedMaskId = null
+                     maskObj.image.clearTint()
+                     emitSound('radar-ok')
+                     
+                     this.tweens.add({
+                       targets: maskObj.image,
+                       scale: 1.2,
+                       duration: 200,
+                       yoyo: true
+                     })
+                   }
+                 }
+               }
+               this.lastDragPosition = { x: dragX, y: dragY }
             }
 
             maskObj.image.x = dragX
@@ -891,59 +943,67 @@ class GameState extends Phaser.Scene {
         let placedInSlot = false
 
         // Vérifier si on lâche sur un slot du centre
-        for (let i = 0; i < slots.length; i++) {
-          const slot = slots[i]
-          const maskBounds = draggedImage.getBounds()
-          const slotBounds = slot.getBounds()
-          const isOverlapping = Phaser.Geom.Rectangle.Overlaps(maskBounds, slotBounds)
-
-          if (isOverlapping) {
-            // Vérifier si le slot contient déjà un masque
-            const existingMaskId = this.placedMasksStore.getMaskInSlot(i)
-            if (existingMaskId && existingMaskId !== draggedMask.id) {
-              // Swap : retourner l'ancien masque à l'inventaire
-              const existingMask = masks.find((m) => m.id === existingMaskId)
-              const existingMaskObj = maskObjects.get(existingMaskId)
-
-              if (existingMask && existingMaskObj) {
-                const existingInventoryPos = inventorySlots.get(existingMaskId) || {
-                  x: this.DRILL_X,
-                  y: this.DRILL_Y + 110,
+        // On empêche le placement si le masque est encore contaminé
+        const isContaminated = (draggedMask.id === this.infectedMaskId && this.infectionLevel > 0)
+        
+        if (!isContaminated) {
+          for (let i = 0; i < slots.length; i++) {
+            const slot = slots[i]
+            const maskBounds = draggedImage.getBounds()
+            const slotBounds = slot.getBounds()
+            const isOverlapping = Phaser.Geom.Rectangle.Overlaps(maskBounds, slotBounds)
+  
+            if (isOverlapping) {
+              // Vérifier si le slot contient déjà un masque
+              const existingMaskId = this.placedMasksStore.getMaskInSlot(i)
+              if (existingMaskId && existingMaskId !== draggedMask.id) {
+                // Swap : retourner l'ancien masque à l'inventaire
+                const existingMask = masks.find((m) => m.id === existingMaskId)
+                const existingMaskObj = maskObjects.get(existingMaskId)
+  
+                if (existingMask && existingMaskObj) {
+                  const existingInventoryPos = inventorySlots.get(existingMaskId) || {
+                    x: this.DRILL_X,
+                    y: this.DRILL_Y + 110,
+                  }
+                  existingMaskObj.image.x = existingInventoryPos.x
+                  existingMaskObj.image.y = existingInventoryPos.y
+                  existingMaskObj.image.setAlpha(1)
+                  existingMaskObj.image.setVisible(true)
+                  existingMask.isPlaced = false
+                  existingMask.slotIndex = undefined
+                  existingMask.x = existingInventoryPos.x
+                  existingMask.y = existingInventoryPos.y
                 }
-                existingMaskObj.image.x = existingInventoryPos.x
-                existingMaskObj.image.y = existingInventoryPos.y
-                existingMaskObj.image.setAlpha(1)
-                existingMaskObj.image.setVisible(true)
-                existingMask.isPlaced = false
-                existingMask.slotIndex = undefined
-                existingMask.x = existingInventoryPos.x
-                existingMask.y = existingInventoryPos.y
               }
+  
+              // Placer le nouveau masque dans le slot
+              draggedMask.isPlaced = true
+              draggedMask.slotIndex = i
+              draggedMask.x = slot.x
+              draggedMask.y = slot.y
+              this.placedMasksStore.setMaskInSlot(i, draggedMask.id)
+              slotTexts[i].setVisible(false)
+  
+              // Masquer l'image du masque
+              draggedImage.setAlpha(0)
+  
+              // Son de placement de masque
+              emitSound('putting-mask-on')
+  
+              // Afficher le masque sur le driller
+              this.updateDrillerMask(draggedMask.dangerId)
+  
+              placedInSlot = true
+              break
             }
-
-            // Placer le nouveau masque dans le slot
-            draggedMask.isPlaced = true
-            draggedMask.slotIndex = i
-            draggedMask.x = slot.x
-            draggedMask.y = slot.y
-            this.placedMasksStore.setMaskInSlot(i, draggedMask.id)
-            slotTexts[i].setVisible(false)
-
-            // Masquer l'image du masque
-            draggedImage.setAlpha(0)
-
-            // Son de placement de masque
-            emitSound('putting-mask-on')
-
-            // Afficher le masque sur le driller
-            this.updateDrillerMask(draggedMask.dangerId)
-
-            placedInSlot = true
-            break
           }
+        } else {
+           // Feedback visuel si on essaie de placer un masque sale
+           emitSound('clic', { rate: 0.5 }) 
         }
 
-        // Si pas placé sur un slot, retourner à l'inventaire
+        // Si pas placé sur un slot (ou contaminé), retourner à l'inventaire
         if (!placedInSlot) {
           if (draggedMask.isPlaced && draggedMask.slotIndex !== undefined) {
             this.placedMasksStore.removeMaskFromSlot(draggedMask.slotIndex)
@@ -1993,12 +2053,12 @@ class GameState extends Phaser.Scene {
    * Malus Bio-hazard: Masques contaminés deviennent inutilisables temporairement
    */
   private applyBioHazardMalus() {
-    console.log('☣️ MALUS BIO-HAZARD: Masques contaminés!')
+    console.log('☣️ MALUS BIO-HAZARD: Masque contaminé!')
 
     // Afficher un message visuel
-    const malusText = this.add.text(400, 200, '☣️ BIO-HAZARD: Masques contaminés!', {
+    const malusText = this.add.text(400, 200, '☣️ BIO-HAZARD: Secouez le masque !', {
       fontSize: '24px',
-      color: '#00ffff',
+      color: '#88cc44',
       backgroundColor: '#000000',
       padding: { x: 15, y: 8 },
       align: 'center',
@@ -2017,42 +2077,47 @@ class GameState extends Phaser.Scene {
       },
     })
 
-    // Rendre tous les masques non-draggable pendant 5 secondes
-    this.maskObjects.forEach((maskObj) => {
-      maskObj.image.disableInteractive()
-
-      // Appliquer un effet visuel de contamination (tint cyan + transparence)
-      maskObj.image.setTint(0x00ffff)
-      maskObj.image.setAlpha(0.5)
-
-      // Animation de pulsation pour montrer la contamination
-      this.tweens.add({
-        targets: maskObj.image,
-        alpha: 0.3,
-        duration: 500,
-        yoyo: true,
-        repeat: 9, // 5 secondes total (500ms * 2 * 10 / 1000)
-      })
-    })
-
-    // Rendre les slots du centre également non-draggable
-    this.slots.forEach((slot) => {
-      slot.disableInteractive()
-    })
-
-    // Réactiver les masques et slots après 5 secondes
-    this.time.delayedCall(5000, () => {
-      this.maskObjects.forEach((maskObj) => {
-        maskObj.image.setInteractive({ draggable: true, useHandCursor: true })
+    // Trouver le masque équipé
+    const equippedMask = this.masks.find(m => m.isPlaced)
+    
+    if (equippedMask) {
+      this.infectedMaskId = equippedMask.id
+      this.infectionLevel = 100
+      
+      // Ejecter le masque vers l'inventaire
+      if (equippedMask.slotIndex !== undefined) {
+        const slotIndex = equippedMask.slotIndex
+        this.placedMasksStore.removeMaskFromSlot(slotIndex)
+        this.slotTexts[slotIndex].setVisible(true)
+        equippedMask.isPlaced = false
+        equippedMask.slotIndex = undefined
+      }
+      
+      this.updateDrillerMask(null)
+      
+      // Animer le retour à l'inventaire
+      const maskObj = this.maskObjects.get(equippedMask.id)
+      const inventoryPos = this.inventorySlots.get(equippedMask.id)
+      
+      if (maskObj && inventoryPos) {
         maskObj.image.setAlpha(1)
-      })
-
-      this.slots.forEach((slot) => {
-        slot.setInteractive({ draggable: true, useHandCursor: true })
-      })
-
-      console.log('☣️ Bio-hazard terminé - masques réactivés')
-    })
+        maskObj.image.setVisible(true)
+        maskObj.image.setTint(0x88cc44) // Slime green
+        
+        this.tweens.add({
+          targets: maskObj.image,
+          x: inventoryPos.x,
+          y: inventoryPos.y,
+          duration: 500,
+          ease: 'Back.easeOut'
+        })
+        
+        equippedMask.x = inventoryPos.x
+        equippedMask.y = inventoryPos.y
+      }
+      
+      emitSound('malus/acid') // Son visqueux/acide
+    }
   }
 }
 
