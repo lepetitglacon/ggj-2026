@@ -52,6 +52,7 @@ class GameState extends Phaser.Scene {
   private acidLayersRemaining: number = 0
   private radiationLockedLayers: number = 0
   private irradiatedMaskId: string | null = null
+  private acidDrillerAura: Phaser.GameObjects.Image | null = null
 
   // Layer suivant et masque de transparence
   private nextLayerBg!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
@@ -183,7 +184,7 @@ class GameState extends Phaser.Scene {
     // Vérifier si c'est le contrat TEST
     const contract = this.gameStore.contract
     this.isTestMode = contract?.title === 'TEST'
-    
+
     // 10 vies pour le mode test, 3 sinon
     this.lives = this.isTestMode ? 10 : 3
   }
@@ -602,97 +603,121 @@ class GameState extends Phaser.Scene {
 
     // Configurer le drag & drop pour les masques de l'inventaire
     this.setupInventoryMaskDragDrop()
-    
+
     // Configurer le drag & drop pour les slots eux-mêmes (réparation post-explosion)
     this.setupInventorySlotDragDrop()
   }
 
   private setupInventorySlotDragDrop() {
-    this.input.on('drag', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject, dragX: number, dragY: number) => {
-      // Vérifier si c'est un slot d'inventaire
-      if (gameObject instanceof Phaser.GameObjects.Rectangle && gameObject.name && gameObject.name.startsWith('mask-')) {
-        const maskId = gameObject.name
-        
-        // Déplacer le slot
-        gameObject.x = dragX
-        gameObject.y = dragY
-        
-        // Si un masque est présent (non placé), le déplacer avec le slot
-        const mask = this.masks.find(m => m.id === maskId)
-        if (mask && !mask.isPlaced) {
-          const maskObj = this.maskObjects.get(maskId)
-          if (maskObj) {
-            maskObj.image.x = dragX
-            maskObj.image.y = dragY
-            // Mettre à jour la position logique
-            mask.x = dragX
-            mask.y = dragY
-          }
-        }
-        
-        // Mettre à jour la position connue du slot (pour le drop des masques)
-        const currentPos = this.inventorySlots.get(maskId)
-        if (currentPos) {
-          currentPos.x = dragX
-          currentPos.y = dragY
-        }
-      }
-    })
+    this.input.on(
+      'drag',
+      (
+        pointer: Phaser.Input.Pointer,
+        gameObject: Phaser.GameObjects.GameObject,
+        dragX: number,
+        dragY: number
+      ) => {
+        // Vérifier si c'est un slot d'inventaire
+        if (
+          gameObject instanceof Phaser.GameObjects.Rectangle &&
+          gameObject.name &&
+          gameObject.name.startsWith('mask-')
+        ) {
+          const maskId = gameObject.name
 
-    this.input.on('dragend', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      if (gameObject instanceof Phaser.GameObjects.Rectangle && gameObject.name && gameObject.name.startsWith('mask-')) {
-        const maskId = gameObject.name
-        const initialPos = this.initialInventoryCoords.get(maskId)
-        
-        if (initialPos) {
-          // Vérifier la distance avec la position d'origine
-          const dist = Phaser.Math.Distance.Between(gameObject.x, gameObject.y, initialPos.x, initialPos.y)
-          
-          // Si on est assez proche (< 50px), on aimante à la position d'origine
-          if (dist < 50) {
-            // Animation de retour à la place
-            this.tweens.add({
-              targets: gameObject,
-              x: initialPos.x,
-              y: initialPos.y,
-              angle: 0, // Remettre droit
-              duration: 200,
-              ease: 'Back.easeOut'
-            })
-            
-            // Mettre à jour la position enregistrée
-            const currentPos = this.inventorySlots.get(maskId)
-            if (currentPos) {
-              currentPos.x = initialPos.x
-              currentPos.y = initialPos.y
+          // Déplacer le slot
+          gameObject.x = dragX
+          gameObject.y = dragY
+
+          // Si un masque est présent (non placé), le déplacer avec le slot
+          const mask = this.masks.find((m) => m.id === maskId)
+          if (mask && !mask.isPlaced) {
+            const maskObj = this.maskObjects.get(maskId)
+            if (maskObj) {
+              maskObj.image.x = dragX
+              maskObj.image.y = dragY
+              // Mettre à jour la position logique
+              mask.x = dragX
+              mask.y = dragY
             }
-            
-            // Si le masque est avec, on le remet aussi
-            const mask = this.masks.find(m => m.id === maskId)
-            if (mask && !mask.isPlaced) {
-              const maskObj = this.maskObjects.get(maskId)
-              if (maskObj) {
-                this.tweens.add({
-                  targets: maskObj.image,
-                  x: initialPos.x,
-                  y: initialPos.y,
-                  angle: 0,
-                  duration: 200,
-                  ease: 'Back.easeOut'
-                })
-                mask.x = initialPos.x
-                mask.y = initialPos.y
-              }
-            }
-            
-            emitSound('clic') // Son de confirmation
-            
-            // Verrouiller le slot une fois remis en place
-            gameObject.disableInteractive()
+          }
+
+          // Mettre à jour la position connue du slot (pour le drop des masques)
+          const currentPos = this.inventorySlots.get(maskId)
+          if (currentPos) {
+            currentPos.x = dragX
+            currentPos.y = dragY
           }
         }
       }
-    })
+    )
+
+    this.input.on(
+      'dragend',
+      (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+        if (
+          gameObject instanceof Phaser.GameObjects.Rectangle &&
+          gameObject.name &&
+          gameObject.name.startsWith('mask-')
+        ) {
+          const maskId = gameObject.name
+          const initialPos = this.initialInventoryCoords.get(maskId)
+
+          if (initialPos) {
+            // Vérifier la distance avec la position d'origine
+            const dist = Phaser.Math.Distance.Between(
+              gameObject.x,
+              gameObject.y,
+              initialPos.x,
+              initialPos.y
+            )
+
+            // Si on est assez proche (< 50px), on aimante à la position d'origine
+            if (dist < 50) {
+              // Animation de retour à la place
+              this.tweens.add({
+                targets: gameObject,
+                x: initialPos.x,
+                y: initialPos.y,
+                angle: 0, // Remettre droit
+                duration: 200,
+                ease: 'Back.easeOut',
+              })
+
+              // Mettre à jour la position enregistrée
+              const currentPos = this.inventorySlots.get(maskId)
+              if (currentPos) {
+                currentPos.x = initialPos.x
+                currentPos.y = initialPos.y
+              }
+
+              // Si le masque est avec, on le remet aussi
+              const mask = this.masks.find((m) => m.id === maskId)
+              if (mask && !mask.isPlaced) {
+                const maskObj = this.maskObjects.get(maskId)
+                if (maskObj) {
+                  this.tweens.add({
+                    targets: maskObj.image,
+                    x: initialPos.x,
+                    y: initialPos.y,
+                    angle: 0,
+                    duration: 200,
+                    ease: 'Back.easeOut',
+                  })
+                  mask.x = initialPos.x
+                  mask.y = initialPos.y
+                }
+              }
+
+              emitSound('clic') // Son de confirmation
+
+              // Verrouiller le slot une fois remis en place
+              gameObject.disableInteractive()
+            }
+          }
+        }
+      }
+    )
   }
 
   private setupSlotDragDrop() {
@@ -815,8 +840,8 @@ class GameState extends Phaser.Scene {
             if (this.irradiatedMaskId === maskId && this.radiationLockedLayers > 0) {
               // Feedback visuel (limité pour ne pas spammer)
               if (this.game.getTime() % 500 < 50) {
-                 this.cameras.main.shake(100, 0.005)
-                 emitSound('clic', { rate: 0.5 })
+                this.cameras.main.shake(100, 0.005)
+                emitSound('clic', { rate: 0.5 })
               }
               return
             }
@@ -1188,7 +1213,7 @@ class GameState extends Phaser.Scene {
 
   private breakLayer() {
     emitSound('rock-crack')
-    
+
     // Vérifier si on entre dans une zone de danger
     const contract = this.gameStore.contract
     if (!contract) return
@@ -1228,8 +1253,11 @@ class GameState extends Phaser.Scene {
     if (this.acidLayersRemaining > 0) {
       this.acidLayersRemaining--
       if (this.acidLayersRemaining === 0) {
-        // Remettre la couleur normale du drill
-        this.driller.clearTint()
+        // Supprimer l'aura acide
+        if (this.acidDrillerAura) {
+          this.acidDrillerAura.destroy()
+          this.acidDrillerAura = null
+        }
       }
     }
 
@@ -1242,18 +1270,18 @@ class GameState extends Phaser.Scene {
           const maskObj = this.maskObjects.get(this.irradiatedMaskId)
           if (maskObj) {
             maskObj.image.clearTint()
-            
+
             // Petit feedback visuel sur le masque libéré
             this.tweens.add({
               targets: maskObj.image,
               scale: 1.2,
               duration: 200,
-              yoyo: true
+              yoyo: true,
             })
           }
           this.irradiatedMaskId = null
         }
-        
+
         emitSound('radar-ok') // Son de déblocage
       }
     }
@@ -1556,13 +1584,13 @@ class GameState extends Phaser.Scene {
 
       rt.on('pointerdown', () => {
         emitSound('short-gaz-leak', { volume: 0.5 })
-        
+
         // Retirer du tableau
         const index = this.toxicClouds.findIndex((c) => c.image === rt)
         if (index > -1) {
           this.toxicClouds.splice(index, 1)
         }
-        
+
         // Détruire l'objet
         rt.destroy()
       })
@@ -1629,7 +1657,7 @@ class GameState extends Phaser.Scene {
     this.inventorySlotObjects.forEach((slot, maskId) => {
       // Rendre le slot interactif pour pouvoir le remettre en place
       slot.setInteractive({ draggable: true, useHandCursor: true })
-      
+
       // Position aléatoire sur l'écran (zone plus large pour l'explosion)
       const randomX = Phaser.Math.Between(100, 700)
       const randomY = Phaser.Math.Between(100, 500) // Plus bas pour ne pas gêner le header
@@ -1652,7 +1680,7 @@ class GameState extends Phaser.Scene {
       })
 
       // Si le masque associé est dans l'inventaire (pas placé), il suit le slot
-      const mask = this.masks.find(m => m.id === maskId)
+      const mask = this.masks.find((m) => m.id === maskId)
       if (mask && !mask.isPlaced) {
         const maskObj = this.maskObjects.get(maskId)
         if (maskObj) {
@@ -1665,7 +1693,7 @@ class GameState extends Phaser.Scene {
             duration: 500,
             ease: 'Back.easeOut',
           })
-          
+
           // Mettre à jour la position logique du masque
           mask.x = randomX
           mask.y = randomY
@@ -1703,12 +1731,12 @@ class GameState extends Phaser.Scene {
     })
 
     // Trouver le masque équipé
-    const equippedMask = this.masks.find(m => m.isPlaced)
-    
+    const equippedMask = this.masks.find((m) => m.isPlaced)
+
     if (equippedMask) {
       this.radiationLockedLayers = 5
       this.irradiatedMaskId = equippedMask.id
-      
+
       // Ejecter le masque vers l'inventaire
       if (equippedMask.slotIndex !== undefined) {
         const slotIndex = equippedMask.slotIndex
@@ -1717,33 +1745,33 @@ class GameState extends Phaser.Scene {
         equippedMask.isPlaced = false
         equippedMask.slotIndex = undefined
       }
-      
+
       this.updateDrillerMask(null)
-      
+
       // Animer le retour à l'inventaire
       const maskObj = this.maskObjects.get(equippedMask.id)
       const inventoryPos = this.inventorySlots.get(equippedMask.id)
-      
+
       if (maskObj && inventoryPos) {
         // Rendre visible (au cas où)
         maskObj.image.setAlpha(1)
         maskObj.image.setVisible(true)
         maskObj.image.setTint(0x00ff00) // Vert fluo
-        
+
         // Animation
         this.tweens.add({
           targets: maskObj.image,
           x: inventoryPos.x,
           y: inventoryPos.y,
           duration: 500,
-          ease: 'Back.easeOut'
+          ease: 'Back.easeOut',
         })
-        
+
         // Update logique pos
         equippedMask.x = inventoryPos.x
         equippedMask.y = inventoryPos.y
       }
-      
+
       emitSound('radiation')
     } else {
       // Si aucun masque n'est porté, pas de malus spécifique (ou dégâts ?)
@@ -1782,8 +1810,30 @@ class GameState extends Phaser.Scene {
     // Activer l'effet acide pour les 2 prochaines couches
     this.acidLayersRemaining = 2
 
-    // Teinter le drill en jaune-vert pour montrer qu'il est acide
-    this.driller.setTint(0xccff00)
+    // Créer une aura acide autour du drill
+    if (this.acidDrillerAura) {
+      this.acidDrillerAura.destroy()
+    }
+
+    this.acidDrillerAura = this.add.image(this.driller.x, this.driller.y, this.driller.texture.key)
+    this.acidDrillerAura.setOrigin(0.5, 0.5)
+    this.acidDrillerAura.setScale(this.driller.scaleX + 0.1, this.driller.scaleY + 0.1)
+    this.acidDrillerAura.setTint(0x88ff00)
+    this.acidDrillerAura.setAlpha(0.8)
+    this.acidDrillerAura.setDepth(this.driller.depth - 1)
+
+    // Animation de pulsation
+    this.tweens.add({
+      targets: this.acidDrillerAura,
+      scaleX: this.driller.scaleX + 0.15,
+      scaleY: this.driller.scaleY + 0.15,
+      alpha: 0.3,
+      duration: 500,
+      yoyo: true,
+      repeat: -1,
+    })
+
+    emitSound('malus/acid') // Si le son existe, sinon generic
   }
 
   /**
