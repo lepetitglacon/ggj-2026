@@ -3,7 +3,12 @@ import { useEngineStore } from '../store/engine'
 import { useContractsStore, type Contract } from '../store/contracts'
 import { useStoreStore } from '../store/store'
 import { useInventoryStore } from '../store/inventory.store'
-import { dangers, getDangerById, dangersByRecognitionLevel, type DangerKey } from '../data/dangers.ts'
+import {
+  dangers,
+  getDangerById,
+  dangersByRecognitionLevel,
+  type DangerKey,
+} from '../data/dangers.ts'
 import { generateLayers } from '../data/layers'
 import { locations, projectCoordinates } from '../data/locations'
 
@@ -23,6 +28,7 @@ export class ContractState extends Phaser.Scene {
 
   preload() {
     this.load.image('world', 'img/world_pixelated.jpg')
+    this.load.image('shop-icon', 'img/menu/shop.reduced.png')
 
     // Précharger les icônes des dangers
     dangers.forEach((danger) => {
@@ -80,13 +86,13 @@ export class ContractState extends Phaser.Scene {
 
     for (let i = 0; i < numContracts; i++) {
       const location = shuffledLocations[i % shuffledLocations.length]
-      
+
       const coords = projectCoordinates(
-        location.lat, 
-        location.lon, 
+        location.lat,
+        location.lon,
         400, // Center X
         320, // Center Y
-        this.worldImage.displayWidth, 
+        this.worldImage.displayWidth,
         this.worldImage.displayHeight
       )
 
@@ -97,10 +103,7 @@ export class ContractState extends Phaser.Scene {
 
       // Obtenir les dangers disponibles pour ce niveau
       const availableDangers = dangersByRecognitionLevel[recognitionTier as 0 | 1 | 2 | 3]
-      const knownDangers = this.getRandomDangers(
-        [...availableDangers],
-        dangerCount
-      )
+      const knownDangers = this.getRandomDangers([...availableDangers], dangerCount)
 
       const contract: Contract = {
         id: i + 1,
@@ -201,7 +204,7 @@ export class ContractState extends Phaser.Scene {
     const potentialDangers = dangersByRecognitionLevel[recognitionLevel]
 
     // --- À GAUCHE: Niveau d'accréditation ---
-    this.add.text(20, 10, '📋 Niveau d\'Accréditation', {
+    this.add.text(20, 10, "📋 Niveau d'Accréditation", {
       fontSize: '14px',
       color: '#ffaa00',
       fontStyle: 'bold',
@@ -217,10 +220,11 @@ export class ContractState extends Phaser.Scene {
         icon.setDisplaySize(16, 16)
 
         // Afficher le label à côté
-        this.add.text(40, dangerY, danger.label, {
-          fontSize: '12px',
-          color: '#ffaa00',
-        })
+        this.add
+          .text(40, dangerY, danger.label, {
+            fontSize: '12px',
+            color: '#ffaa00',
+          })
           .setOrigin(0, 0.5)
 
         dangerY += 18
@@ -245,11 +249,12 @@ export class ContractState extends Phaser.Scene {
         const maskBox = this.add.rectangle(785, maskY, 12, 12, danger.color)
         maskBox.setOrigin(0.5, 0.5)
 
-        this.add.text(770, maskY, danger.label, {
-          fontSize: '12px',
-          color: '#ffaa00',
-          align: 'right',
-        })
+        this.add
+          .text(770, maskY, danger.label, {
+            fontSize: '12px',
+            color: '#ffaa00',
+            align: 'right',
+          })
           .setOrigin(1, 0.5)
 
         maskY += 18
@@ -278,16 +283,15 @@ export class ContractState extends Phaser.Scene {
     storeMarker.setInteractive({ useHandCursor: true })
 
     // Ajouter une icône de magasin
-    const storeIcon = this.add.text(storeX, storeY, '🛒', {
-      fontSize: '24px',
-    })
+    const storeIcon = this.add.image(storeX, storeY, 'shop-icon')
     storeIcon.setOrigin(0.5, 0.5)
+    storeIcon.setScale(0.12)
     storeIcon.setInteractive({ useHandCursor: true })
 
-    // Ajouter un effet de pulsation
+    // Ajouter un effet de pulsation (seulement sur le marqueur)
     this.tweens.add({
       targets: [storeMarker, storeIcon],
-      scale: 1.2,
+      scale: 0.01,
       alpha: 0.8,
       duration: 1500,
       yoyo: true,

@@ -3,7 +3,10 @@
     <div class="store-panel">
       <button class="close-button" @click="closeStore">×</button>
 
-      <h1 class="store-title">🛒 Magasin d'Équipement</h1>
+      <h1 class="store-title">
+        <img src="/img/menu/shop.reduced.png" alt="Shop" class="shop-icon-image">
+        Magasin d'Équipement
+      </h1>
 
       <div class="oil-display">
         <span class="oil-icon">🛢️</span>
@@ -278,6 +281,16 @@ const buyItem = (type: string, level: RadarLevel | DrillLevel | MaskLevel | Mask
   text-align: center;
   font-weight: bold;
   text-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.shop-icon-image {
+  height: 40px;
+  width: 40px;
+  object-fit: contain;
 }
 
 .oil-display {
