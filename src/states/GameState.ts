@@ -568,7 +568,7 @@ class GameState extends Phaser.Scene {
       slot.setInteractive({ draggable: true, useHandCursor: true })
       this.slots.push(slot)
 
-      const slotText = this.add.text(x, slotY, `${i + 1}`, {
+      const slotText = this.add.text(x, slotY, ``, {
         fontSize: '16px',
         color: '#ffffff',
         fontStyle: 'bold',
@@ -907,8 +907,37 @@ class GameState extends Phaser.Scene {
                     emitSound('malus/acid', { rate: 2.0, volume: 0.2 })
                   }
 
-                  // Particules de crasse (optionnel, simple tint update pour l'instant)
-                  // On pourrait interpoler la couleur ici si on veut
+                  // Particules de crasse propulsées dans la direction opposée
+                  const dx = dragX - this.lastDragPosition.x
+                  const dy = dragY - this.lastDragPosition.y
+
+                  // Créer 1-2 particules
+                  for (let i = 0; i < 2; i++) {
+                    const p = this.add.image(
+                      dragX + Phaser.Math.Between(-10, 10),
+                      dragY + Phaser.Math.Between(-10, 10),
+                      'dirt-particle'
+                    )
+                    p.setTint(0x88cc44) // Vert slime
+                    p.setScale(Phaser.Math.FloatBetween(0.3, 0.6))
+                    p.setDepth(60) // Au dessus du reste
+
+                    this.tweens.add({
+                      targets: p,
+                      x:
+                        p.x -
+                        dx * Phaser.Math.FloatBetween(2.0, 4.0) +
+                        Phaser.Math.Between(-30, 30),
+                      y:
+                        p.y -
+                        dy * Phaser.Math.FloatBetween(2.0, 4.0) +
+                        Phaser.Math.Between(-30, 30),
+                      alpha: 0,
+                      angle: Phaser.Math.Between(0, 360),
+                      duration: Phaser.Math.Between(300, 600),
+                      onComplete: () => p.destroy(),
+                    })
+                  }
 
                   if (this.infectionLevel <= 0) {
                     // Nettoyé !
@@ -1303,12 +1332,11 @@ class GameState extends Phaser.Scene {
   }
 
   private breakLayer() {
-    emitSound('rock-crack')
+    emitSound('rock-crack', { volume: 0.4 })
 
     // Vérifier si on entre dans une zone de danger
     const contract = this.gameStore.contract
     if (!contract) return
-
     const nextIndex = this.currentLayerIndex + 1
     if (nextIndex < contract.layers.length) {
       const nextLayer = contract.layers[nextIndex]
@@ -1846,7 +1874,7 @@ class GameState extends Phaser.Scene {
         })
       },
     })
-    
+
     this.updatePostPipelines()
   }
   /**

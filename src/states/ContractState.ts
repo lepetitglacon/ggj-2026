@@ -3,6 +3,7 @@ import { useEngineStore } from '../store/engine'
 import { useContractsStore, type Contract } from '../store/contracts'
 import { useStoreStore } from '../store/store'
 import { useInventoryStore } from '../store/inventory.store'
+import { useDialogueStore } from '../store/dialogue.store'
 import {
   dangers,
   getDangerById,
@@ -12,6 +13,8 @@ import {
 import { generateLayers } from '../data/layers'
 import { locations, projectCoordinates } from '../data/locations'
 import { preloadSounds, emitSound } from '../listeners/sound.listener'
+import { showDialogue } from '../ui/DialogueBox'
+import { showContractPanel } from '../ui/ContractPanel'
 
 export class ContractState extends Phaser.Scene {
   private worldImage!: Phaser.GameObjects.Image
@@ -30,6 +33,7 @@ export class ContractState extends Phaser.Scene {
   preload() {
     this.load.image('world', 'img/world_pixelated.jpg')
     this.load.image('shop-icon', 'img/menu/shop.reduced.png')
+    this.load.image('rodolphe', 'img/chat/rodolphe.jpg')
     preloadSounds(this)
 
     // Précharger les icônes des dangers
@@ -76,6 +80,33 @@ export class ContractState extends Phaser.Scene {
 
     // Afficher le marqueur du magasin
     this.displayStoreMarker()
+
+    // Afficher les dialogues de Rodolphe
+    const dialogueStore = useDialogueStore()
+    const engineStore = useEngineStore()
+
+    if (!dialogueStore.hasSeenFirstContractDialogue) {
+      // Premier dialogue: première entrée sur la map
+      dialogueStore.hasSeenFirstContractDialogue = true
+      showDialogue({
+        scene: this,
+        characterName: 'Rodolphe',
+        characterImage: 'rodolphe',
+        text: "Salut Drilleur, tu m'accompagnes en Angola aujourd'hui, ouai ça fait pas rêver mais t'en fais pas on a d'autres ambitions ! Bref clique sur le contrat quand tu es prêt",
+      })
+    } else if (
+      !dialogueStore.hasSeenTutoCompleteDialogue &&
+      engineStore.isCountryCompleted('Angola')
+    ) {
+      // Troisième dialogue: après avoir complété le tuto (Angola)
+      dialogueStore.hasSeenTutoCompleteDialogue = true
+      showDialogue({
+        scene: this,
+        characterName: 'Rodolphe',
+        characterImage: 'rodolphe',
+        text: "Cool on a débloqué des fonds pour partir en Europe, c'est grâce à toi tu fais du bon boulot, continue comme ça. Ah oui, on a aussi débloqué notre base au Groenland pour améliorer le matériel, commence par améliorer le radar.",
+      })
+    }
   }
 
   private generateContracts() {
@@ -172,10 +203,31 @@ export class ContractState extends Phaser.Scene {
           })
         }
 
-        // Clic sur le marqueur - ouvre le menu Vue
+        // Clic sur le marqueur - ouvre le panneau Phaser
         marker.on('pointerdown', () => {
           emitSound('clic')
+
+          // Ouvrir le panneau du contrat en Phaser
           this.contractsStore.selectContract(contract)
+          showContractPanel(this, contract)
+
+          // Afficher le second dialogue après l'ouverture du contrat
+          const dialogueStore = useDialogueStore()
+          if (
+            dialogueStore.hasSeenFirstContractDialogue &&
+            !dialogueStore.hasSeenSecondContractDialogue
+          ) {
+            dialogueStore.hasSeenSecondContractDialogue = true
+            // Petit délai pour laisser le panneau s'afficher
+            this.time.delayedCall(300, () => {
+              showDialogue({
+                scene: this,
+                characterName: 'Rodolphe',
+                characterImage: 'rodolphe',
+                text: "Dans un contrat tu peux voir le pétrole qu'il va nous ramener, le nombre de couches à miner et les différents dangers potentiels. On pourra voir un peu plus clair quand on aura amélioré notre radar, aller champion en piste !",
+              })
+            })
+          }
         })
 
         // Survol
@@ -351,7 +403,7 @@ export class ContractState extends Phaser.Scene {
       // Survol
       const showStoreTooltip = () => {
         storeMarker.setFillStyle(0xffff00)
-        const tooltip = this.add.text(storeX, storeY - 30, 'Magasin', {
+        const tooltip = this.add.text(storeX, storeY - 30, 'Groenland', {
           fontSize: '16px',
           color: '#ffffff',
           backgroundColor: '#000000',

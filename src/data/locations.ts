@@ -26,7 +26,7 @@ const countryImageMap: Record<string, string> = {
   'États-Unis': 'US',
   Qatar: 'top',
   Russie: 'top',
-  TEST: 'top', // Contract de test
+  // TEST: 'top', // Contract de test
 }
 
 // Get the image filename for a country (returns undefined if no custom image)
@@ -37,7 +37,7 @@ export const getCountryImageName = (countryName: string): string | undefined => 
 export const locations: Location[] = [
   // Level 0 - Tutoriel
   { name: 'Angola', lat: -11.2, lon: 17.9, recognitionLevel: 0 },
-  { name: 'TEST', lat: -30.0, lon: 25.0, recognitionLevel: 0 },
+  // { name: 'TEST', lat: -30.0, lon: 25.0, recognitionLevel: 0 },
 
   // Level 1 - Afrique + Europe
   { name: 'Nigeria', lat: 9.1, lon: 8.7, recognitionLevel: 1 },
