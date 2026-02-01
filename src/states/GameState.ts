@@ -891,6 +891,9 @@ class GameState extends Phaser.Scene {
       this.engineStore.addOil(contract.oil)
       this.engineStore.addRecognition(10)
 
+      // Marquer le pays comme complété
+      this.engineStore.completeCountry(contract.title)
+
       const successText = this.add.text(
         400,
         300,

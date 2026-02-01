@@ -77,16 +77,10 @@ export class ContractState extends Phaser.Scene {
   }
 
   private generateContracts() {
-    const numContracts = 15
     const contracts: Contract[] = []
-    const engineStore = useEngineStore()
 
-    // Mélanger les lieux pour avoir des destinations aléatoires mais cohérentes
-    const shuffledLocations = [...locations].sort(() => Math.random() - 0.5)
-
-    for (let i = 0; i < numContracts; i++) {
-      const location = shuffledLocations[i % shuffledLocations.length]
-
+    // Générer un contrat par pays avec son propre niveau de reconnaissance
+    locations.forEach((location, index) => {
       const coords = projectCoordinates(
         location.lat,
         location.lon,
@@ -96,17 +90,19 @@ export class ContractState extends Phaser.Scene {
         this.worldImage.displayHeight
       )
 
+      // Utiliser le niveau de reconnaissance du pays
+      const recognitionTier = location.recognitionLevel
+
       // Générer les dangers connus pour ce contrat
       // Niveau 0 (tutoriel) = exactement 2 dangers, sinon 1-3 aléatoire
-      const recognitionTier = engineStore.getRecognitionTier()
       const dangerCount = recognitionTier === 0 ? 2 : Math.floor(Math.random() * 3) + 1
 
       // Obtenir les dangers disponibles pour ce niveau
-      const availableDangers = dangersByRecognitionLevel[recognitionTier as 0 | 1 | 2 | 3]
+      const availableDangers = dangersByRecognitionLevel[recognitionTier]
       const knownDangers = this.getRandomDangers([...availableDangers], dangerCount)
 
       const contract: Contract = {
-        id: i + 1,
+        id: index + 1,
         title: location.name,
         oil: Math.floor(Math.random() * 5000) + 1000,
         minSteps: Math.floor(Math.random() * 8) + 3,
@@ -118,7 +114,7 @@ export class ContractState extends Phaser.Scene {
       }
 
       contracts.push(contract)
-    }
+    })
 
     this.contractsStore.setContracts(contracts)
   }
@@ -129,46 +125,64 @@ export class ContractState extends Phaser.Scene {
   }
 
   private displayContractMarkers() {
+    const engineStore = useEngineStore()
+
     this.contractsStore.contracts.forEach((contract) => {
+      const isUnlocked = engineStore.isCountryUnlocked(contract.title)
+      const isCompleted = engineStore.isCountryCompleted(contract.title)
+
+      // Couleurs selon l'état
+      const markerColor = isUnlocked ? (isCompleted ? 0x00ff00 : 0xff0000) : 0x666666
+      const strokeColor = isUnlocked ? 0xffff00 : 0x444444
+
       // Créer un marqueur pour chaque contrat
-      const marker = this.add.circle(contract.x, contract.y, 8, 0xff0000)
-      marker.setStrokeStyle(2, 0xffff00)
-      marker.setInteractive({ useHandCursor: true })
+      const marker = this.add.circle(contract.x, contract.y, 8, markerColor)
+      marker.setStrokeStyle(2, strokeColor)
 
-      // Afficher les étoiles du niveau de reconnaissance
-      const starsText = this.getStarsForLevel(contract.recognitionLevel)
-      const starsLabel = this.add.text(contract.x, contract.y - 15, starsText, {
-        fontSize: '12px',
-        color: '#ffff00',
-        fontStyle: 'bold',
-      })
-      starsLabel.setOrigin(0.5, 1)
+      if (isUnlocked) {
+        // Pays débloqué: interactif avec tween
+        marker.setInteractive({ useHandCursor: true })
 
-      // Ajouter un effet de pulsation
-      this.tweens.add({
-        targets: marker,
-        scale: 1.3,
-        alpha: 0.7,
-        duration: 1000,
-        yoyo: true,
-        repeat: -1,
-      })
+        // Afficher les étoiles du niveau de reconnaissance
+        const starsText = this.getStarsForLevel(contract.recognitionLevel)
+        const starsLabel = this.add.text(contract.x, contract.y - 15, starsText, {
+          fontSize: '12px',
+          color: isCompleted ? '#00ff00' : '#ffff00',
+          fontStyle: 'bold',
+        })
+        starsLabel.setOrigin(0.5, 1)
 
-      // Clic sur le marqueur - ouvre le menu Vue
-      marker.on('pointerdown', () => {
-        this.contractsStore.selectContract(contract)
-      })
+        // Ajouter un effet de pulsation seulement si pas complété
+        if (!isCompleted) {
+          this.tweens.add({
+            targets: marker,
+            scale: 1.3,
+            alpha: 0.7,
+            duration: 1000,
+            yoyo: true,
+            repeat: -1,
+          })
+        }
 
-      // Survol
-      marker.on('pointerover', () => {
-        marker.setFillStyle(0xffff00)
-        this.showContractTooltip(contract)
-      })
+        // Clic sur le marqueur - ouvre le menu Vue
+        marker.on('pointerdown', () => {
+          this.contractsStore.selectContract(contract)
+        })
 
-      marker.on('pointerout', () => {
-        marker.setFillStyle(0xff0000)
-        this.hideContractTooltip()
-      })
+        // Survol
+        marker.on('pointerover', () => {
+          marker.setFillStyle(0xffff00)
+          this.showContractTooltip(contract)
+        })
+
+        marker.on('pointerout', () => {
+          marker.setFillStyle(isCompleted ? 0x00ff00 : 0xff0000)
+          this.hideContractTooltip()
+        })
+      } else {
+        // Pays verrouillé: grisé, pas de tween, pas de niveau affiché
+        marker.setAlpha(0.5)
+      }
     })
   }
 
@@ -264,6 +278,10 @@ export class ContractState extends Phaser.Scene {
 
   private displayStoreMarker() {
     const storeStore = useStoreStore()
+    const engineStore = useEngineStore()
+
+    // Vérifier si le tutoriel (Angola) est complété
+    const isTutorialCompleted = engineStore.isCountryCompleted('Angola')
 
     // Position du marqueur du magasin (Groenland)
     const greenlandCoords = projectCoordinates(
@@ -278,58 +296,68 @@ export class ContractState extends Phaser.Scene {
     const storeY = greenlandCoords.y
 
     // Créer un marqueur spécial pour le magasin
-    const storeMarker = this.add.circle(storeX, storeY, 12, 0xffaa00)
-    storeMarker.setStrokeStyle(3, 0xffff00)
-    storeMarker.setInteractive({ useHandCursor: true })
+    const storeMarker = this.add.circle(storeX, storeY, 12, isTutorialCompleted ? 0xffaa00 : 0x666666)
+    storeMarker.setStrokeStyle(3, isTutorialCompleted ? 0xffff00 : 0x444444)
+    if (isTutorialCompleted) {
+      storeMarker.setInteractive({ useHandCursor: true })
+    } else {
+      storeMarker.setAlpha(0.5)
+    }
 
     // Ajouter une icône de magasin
     const storeIcon = this.add.image(storeX, storeY, 'shop-icon')
     storeIcon.setOrigin(0.5, 0.5)
     storeIcon.setScale(0.12)
-    storeIcon.setInteractive({ useHandCursor: true })
-
-    // Ajouter un effet de pulsation (seulement sur le marqueur)
-    this.tweens.add({
-      targets: [storeMarker, storeIcon],
-      scale: 0.01,
-      alpha: 0.8,
-      duration: 1500,
-      yoyo: true,
-      repeat: -1,
-    })
-
-    // Clic sur le marqueur - ouvre le magasin
-    const openStore = () => {
-      storeStore.openStore()
+    if (isTutorialCompleted) {
+      storeIcon.setInteractive({ useHandCursor: true })
+    } else {
+      storeIcon.setAlpha(0.5)
     }
 
-    storeMarker.on('pointerdown', openStore)
-    storeIcon.on('pointerdown', openStore)
-
-    // Survol
-    const showStoreTooltip = () => {
-      storeMarker.setFillStyle(0xffff00)
-      const tooltip = this.add.text(storeX, storeY - 30, 'Magasin', {
-        fontSize: '16px',
-        color: '#ffffff',
-        backgroundColor: '#000000',
-        padding: { x: 8, y: 6 },
+    // Ajouter un effet de pulsation seulement si tutoriel complété
+    if (isTutorialCompleted) {
+      this.tweens.add({
+        targets: [storeMarker, storeIcon],
+        scale: 0.01,
+        alpha: 0.8,
+        duration: 1500,
+        yoyo: true,
+        repeat: -1,
       })
-      tooltip.setOrigin(0.5, 1)
-      tooltip.setName('store-tooltip')
-    }
 
-    const hideStoreTooltip = () => {
-      storeMarker.setFillStyle(0xffaa00)
-      const tooltip = this.children.getByName('store-tooltip')
-      if (tooltip) {
-        tooltip.destroy()
+      // Clic sur le marqueur - ouvre le magasin
+      const openStore = () => {
+        storeStore.openStore()
       }
-    }
 
-    storeMarker.on('pointerover', showStoreTooltip)
-    storeMarker.on('pointerout', hideStoreTooltip)
-    storeIcon.on('pointerover', showStoreTooltip)
-    storeIcon.on('pointerout', hideStoreTooltip)
+      storeMarker.on('pointerdown', openStore)
+      storeIcon.on('pointerdown', openStore)
+
+      // Survol
+      const showStoreTooltip = () => {
+        storeMarker.setFillStyle(0xffff00)
+        const tooltip = this.add.text(storeX, storeY - 30, 'Magasin', {
+          fontSize: '16px',
+          color: '#ffffff',
+          backgroundColor: '#000000',
+          padding: { x: 8, y: 6 },
+        })
+        tooltip.setOrigin(0.5, 1)
+        tooltip.setName('store-tooltip')
+      }
+
+      const hideStoreTooltip = () => {
+        storeMarker.setFillStyle(0xffaa00)
+        const tooltip = this.children.getByName('store-tooltip')
+        if (tooltip) {
+          tooltip.destroy()
+        }
+      }
+
+      storeMarker.on('pointerover', showStoreTooltip)
+      storeMarker.on('pointerout', hideStoreTooltip)
+      storeIcon.on('pointerover', showStoreTooltip)
+      storeIcon.on('pointerout', hideStoreTooltip)
+    }
   }
 }

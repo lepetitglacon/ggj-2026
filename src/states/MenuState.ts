@@ -14,20 +14,27 @@ export class MenuState extends Phaser.Scene {
 
   preload() {
     // Load any assets needed for preloader here
+    this.load.image('main-menu', 'img/menu/bg.avif')
   }
 
   create() {
     this.cameras.main.setBackgroundColor('#1a1a2e')
 
+    const image = this.add.image(0, 0, 'main-menu')
+    image.setOrigin(0.5, 0.5)
+    image.setPosition(800 / 2, 600 / 2)
+    image.setScale(1.5)
+
     // Titre du menu
-    const title = this.add.text(400, 200, 'Menu Principal', {
+    const title = this.add.text(400, 200, 'Drilling', {
       fontSize: '48px',
-      color: '#00ff00',
+      color: '#000000',
     })
     title.setOrigin(0.5, 0.5)
+    title.setPosition(800 / 2 + 150, 600 / 2 - 100)
 
     // Bouton pour aller au contrat
-    const contractButton = this.add.rectangle(400, 350, 200, 60, 0x0066cc)
+    const contractButton = this.add.rectangle(title.x, 450, 200, 60, 0x0066cc)
     contractButton.setInteractive({ useHandCursor: true })
 
     const contractText = this.add.text(400, 350, 'Contrats', {
@@ -35,6 +42,7 @@ export class MenuState extends Phaser.Scene {
       color: '#ffffff',
     })
     contractText.setOrigin(0.5, 0.5)
+    contractText.setPosition(contractButton.x, contractButton.y)
 
     contractButton.on('pointerdown', () => {
       this.scene.start('contract')
@@ -46,28 +54,6 @@ export class MenuState extends Phaser.Scene {
 
     contractButton.on('pointerout', () => {
       contractButton.setFillStyle(0x0066cc)
-    })
-
-    // Bouton pour aller au jeu
-    const gameButton = this.add.rectangle(400, 450, 200, 60, 0x00cc00)
-    gameButton.setInteractive({ useHandCursor: true })
-
-    const gameText = this.add.text(400, 450, 'Démarrer le jeu', {
-      fontSize: '24px',
-      color: '#000000',
-    })
-    gameText.setOrigin(0.5, 0.5)
-
-    gameButton.on('pointerdown', () => {
-      this.scene.start('game')
-    })
-
-    gameButton.on('pointerover', () => {
-      gameButton.setFillStyle(0x00aa00)
-    })
-
-    gameButton.on('pointerout', () => {
-      gameButton.setFillStyle(0x00cc00)
     })
   }
 }

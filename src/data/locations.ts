@@ -6,24 +6,32 @@ export interface Location {
   name: string
   lat: number
   lon: number
+  recognitionLevel: 0 | 1 | 2 | 3 // 0 = tutoriel, 1 = Afrique/Europe, 2 = autres, 3 = US/Qatar/Russie
 }
 
 export const locations: Location[] = [
-  { name: 'États-Unis', lat: 37.1, lon: -95.7 },
-  { name: 'Russie', lat: 61.5, lon: 105.3 },
-  { name: 'Canada', lat: 56.1, lon: -106.3 },
-  { name: 'Chine', lat: 35.9, lon: 104.2 },
-  { name: 'Brésil', lat: -14.2, lon: -51.9 },
-  { name: 'Mexique', lat: 23.6, lon: -102.5 },
-  { name: 'Kazakhstan', lat: 48.0, lon: 66.9 },
-  { name: 'Norvège', lat: 60.5, lon: 8.5 },
-  { name: 'Nigeria', lat: 9.1, lon: 8.7 },
-  { name: 'Qatar', lat: 25.4, lon: 51.2 },
-  { name: 'Venezuela', lat: 6.4, lon: -66.6 },
-  { name: 'Angola', lat: -11.2, lon: 17.9 },
-  { name: 'Libye', lat: 26.3, lon: 17.2 },
-  { name: 'Algérie', lat: 28.0, lon: 2.0 },
-  { name: 'Royaume-Uni', lat: 55.4, lon: -3.4 },
+  // Level 0 - Tutoriel
+  { name: 'Angola', lat: -11.2, lon: 17.9, recognitionLevel: 0 },
+
+  // Level 1 - Afrique + Europe
+  { name: 'Nigeria', lat: 9.1, lon: 8.7, recognitionLevel: 1 },
+  { name: 'Libye', lat: 26.3, lon: 17.2, recognitionLevel: 1 },
+  { name: 'Algérie', lat: 28.0, lon: 2.0, recognitionLevel: 1 },
+  { name: 'Norvège', lat: 60.5, lon: 8.5, recognitionLevel: 1 },
+  { name: 'Royaume-Uni', lat: 55.4, lon: -3.4, recognitionLevel: 1 },
+
+  // Level 2 - Reste du monde (sauf US, Qatar, Russie)
+  { name: 'Canada', lat: 56.1, lon: -106.3, recognitionLevel: 2 },
+  { name: 'Chine', lat: 35.9, lon: 104.2, recognitionLevel: 2 },
+  { name: 'Brésil', lat: -14.2, lon: -51.9, recognitionLevel: 2 },
+  { name: 'Mexique', lat: 23.6, lon: -102.5, recognitionLevel: 2 },
+  { name: 'Kazakhstan', lat: 48.0, lon: 66.9, recognitionLevel: 2 },
+  { name: 'Venezuela', lat: 6.4, lon: -66.6, recognitionLevel: 2 },
+
+  // Level 3 - Les grands (US, Qatar, Russie)
+  { name: 'États-Unis', lat: 37.1, lon: -95.7, recognitionLevel: 3 },
+  { name: 'Qatar', lat: 25.4, lon: 51.2, recognitionLevel: 3 },
+  { name: 'Russie', lat: 61.5, lon: 105.3, recognitionLevel: 3 },
 ]
 
 // Project Lat/Lon to X/Y coordinates relative to the map image dimensions
