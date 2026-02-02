@@ -14,8 +14,6 @@ import { InvertPipeline } from '../utils/InvertPipeline'
 import { FirePipeline } from '../utils/FirePipeline'
 import { BeamPipeline } from '../utils/BeamPipeline'
 
-type ParticleEmitter = Phaser.GameObjects.Particles.ParticleEmitter // Animation par défaut
-
 class GameState extends Phaser.Scene {
   private gameStore = useGameStore()
   private engineStore = useEngineStore()
@@ -37,7 +35,6 @@ class GameState extends Phaser.Scene {
   private drillerMask!: Phaser.GameObjects.Image | null // Masque sur la tête du driller
   private drillerText!: Phaser.GameObjects.Text
   private currentLayerRect!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image
-  private layerText!: Phaser.GameObjects.Text
   private livesText!: Phaser.GameObjects.Text
 
   // Slots et masques
@@ -48,7 +45,6 @@ class GameState extends Phaser.Scene {
   private inventorySlots: Map<string, { x: number; y: number }> = new Map() // Slots d'inventaire pour chaque masque (position actuelle)
   private inventorySlotObjects: Map<string, Phaser.GameObjects.Rectangle> = new Map() // Objets visuels des slots
   private initialInventoryCoords: Map<string, { x: number; y: number }> = new Map() // Positions d'origine des slots
-  private draggingSlot: Phaser.GameObjects.Rectangle | null = null
   private activeMaskDangerId: string | null = null // ID du danger du masque actuellement porté
 
   // États des malus
@@ -94,11 +90,9 @@ class GameState extends Phaser.Scene {
   private drillingProgress: number = 0
   private currentLayer: Layer | null = null
   private lives: number = 3
-  private emitter?: ParticleEmitter
 
   // Malus actifs
   private activeMalus: Set<string> = new Set() // Set des IDs de dangers qui ont été déclenchés
-  private acidLayersRemaining: number = 0 // Nombre de couches restantes avec effet acide
   private isTestMode: boolean = false // Mode test sans forage automatique
   private nextLayerButton?: Phaser.GameObjects.Text // Bouton pour passer à la couche suivante en mode test
 
@@ -641,7 +635,7 @@ class GameState extends Phaser.Scene {
     this.input.on(
       'drag',
       (
-        pointer: Phaser.Input.Pointer,
+        _pointer: Phaser.Input.Pointer,
         gameObject: Phaser.GameObjects.GameObject,
         dragX: number,
         dragY: number
@@ -683,7 +677,7 @@ class GameState extends Phaser.Scene {
 
     this.input.on(
       'dragend',
-      (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
         if (
           gameObject instanceof Phaser.GameObjects.Rectangle &&
           gameObject.name &&
@@ -856,12 +850,13 @@ class GameState extends Phaser.Scene {
 
     this.input.on(
       'dragstart',
-      (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
         // Initialiser la position pour le calcul de vitesse (Bio-Hazard)
         for (const [maskId, maskObj] of maskObjects.entries()) {
           if (maskObj.image === gameObject) {
             if (this.infectedMaskId === maskId && this.infectionLevel > 0) {
-              this.lastDragPosition = { x: gameObject.x, y: gameObject.y }
+              const img = gameObject as Phaser.GameObjects.Image
+              this.lastDragPosition = { x: img.x, y: img.y }
             }
             break
           }
@@ -905,7 +900,7 @@ class GameState extends Phaser.Scene {
 
                   // Son de nettoyage (gluant/frottement)
                   if (Math.random() > 0.7) {
-                    emitSound('malus/acid', { rate: 2.0, volume: 0.2 })
+                    emitSound('acid', { rate: 2.0, volume: 0.2 })
                   }
 
                   // Particules de crasse propulsées dans la direction opposée
@@ -1286,22 +1281,6 @@ class GameState extends Phaser.Scene {
     this.dirtBackParticles2.emitParticleAt(200, 200)
   }
 
-  private getLayerLabel(layer: Layer): string {
-    if (layer.type === 'normal') return 'Normal'
-    if (layer.dangerId) {
-      const danger = getDangerById(layer.dangerId)
-      return danger?.label || 'Danger'
-    }
-    return 'Inconnu'
-  }
-
-  private getLayerDescription(): string {
-    const contract = this.gameStore.contract
-    if (!contract) return ''
-    const layer = contract.layers[this.currentLayerIndex]
-    return `Couche ${this.currentLayerIndex + 1} - ${this.getLayerLabel(layer)}`
-  }
-
   private shakeEffect() {
     const shakeAmount = 6
     const bodyShakeAmount = 2 // Le corps tremble moins
@@ -1439,37 +1418,6 @@ class GameState extends Phaser.Scene {
         () => {}
       )
     }
-  }
-
-  private resetMasksInSlots() {
-    // Remettre tous les masques à leur position d'inventaire
-    this.masks.forEach((mask) => {
-      if (mask.isPlaced && mask.slotIndex !== undefined) {
-        const slotIndex = mask.slotIndex
-        const slot = this.slots[slotIndex]
-        const maskObj = this.maskObjects.get(mask.id)
-
-        if (slot && this.slotTexts[slotIndex]) {
-          // Réinitialiser le slot
-          this.slotTexts[slotIndex].setVisible(true)
-
-          // Supprimer du mapping slot -> masque
-          this.placedMasksStore.removeMaskFromSlot(slotIndex)
-        }
-
-        // Rendre visible l'image du masque
-        if (maskObj) {
-          maskObj.image.setAlpha(1)
-        }
-
-        // Réinitialiser l'état du masque
-        mask.isPlaced = false
-        mask.slotIndex = undefined
-      }
-    })
-
-    // Retirer le masque du driller
-    this.updateDrillerMask(null, true)
   }
 
   private gainOilForLayer(layerIndex: number) {
@@ -2141,7 +2089,7 @@ class GameState extends Phaser.Scene {
 
     this.fireHitbox.on('pointerdown', () => {
       this.fireHealth--
-      emitSound('water-noises', { volume: 0.5, rate: 1.5 }) // Bruit d'eau/pshit
+      emitSound('acid', { volume: 0.5, rate: 1.5 }) // Bruit d'eau/pshit
 
       const intensity = this.fireHealth / 10
       this.updateFireIntensity(intensity)
@@ -2235,7 +2183,7 @@ class GameState extends Phaser.Scene {
         equippedMask.y = inventoryPos.y
       }
 
-      emitSound('malus/acid') // Son visqueux/acide
+      emitSound('acid') // Son visqueux/acide
     }
   }
 }
